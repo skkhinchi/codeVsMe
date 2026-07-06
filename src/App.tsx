@@ -189,7 +189,7 @@ function AppContent() {
     <div className="app">
       <header className="app-header">
         <div className="app-header__brand">
-          <img src="/logo.png" alt="Code v/s Me" className="app-header__logo" />
+          <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Code v/s Me" className="app-header__logo" />
           <div className="app-header__text">
             <h1>Code v/s Me</h1>
             <p>Infinite Challenge. Infinite Growth.</p>

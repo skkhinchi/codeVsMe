@@ -51,3 +51,25 @@ Open **http://localhost:5173** — the app always runs on this port.
 npm run build
 npm run preview
 ```
+
+## Deploy on GitHub Pages
+
+This repo includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) that builds and deploys on every push to `main`.
+
+### One-time setup
+
+1. Open **https://github.com/skkhinchi/codeVsMe/settings/pages**
+2. Under **Build and deployment** → **Source**, choose **GitHub Actions**
+3. Push to `main` (or run the workflow manually from the **Actions** tab)
+
+### Live URL
+
+After the first successful deploy:
+
+**https://skkhinchi.github.io/codeVsMe/**
+
+### Notes
+
+- Local dev still uses `npm run dev` at `http://localhost:5173`
+- Production builds set `GITHUB_PAGES=true` so asset paths work under `/codeVsMe/`
+- **File System Access API** (local folder editing) requires Chrome/Edge and may not work the same on the hosted site; workspace files in IndexedDB still work

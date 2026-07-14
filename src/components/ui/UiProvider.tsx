@@ -113,11 +113,16 @@ export function UiProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const promptIsOpen = promptState !== null;
+
   useEffect(() => {
-    if (!promptState) return;
-    promptInputRef.current?.focus();
-    promptInputRef.current?.select();
-  }, [promptState]);
+    if (!promptIsOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      promptInputRef.current?.focus();
+      promptInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [promptIsOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

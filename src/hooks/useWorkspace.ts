@@ -29,12 +29,10 @@ async function createDefaultWorkspace(): Promise<{ nodes: WorkspaceNode[]; activ
   const now = Date.now();
 
   const practiceId = makeId();
-  const dsaId = makeId();
   const welcomeId = makeId();
 
   const nodes: WorkspaceNode[] = [
     { id: practiceId, name: 'Practice', type: 'folder', parentId: null, updatedAt: now },
-    { id: dsaId, name: 'DSA', type: 'folder', parentId: null, updatedAt: now },
     {
       id: welcomeId,
       name: 'welcome.js',
@@ -53,6 +51,65 @@ async function createDefaultWorkspace(): Promise<{ nodes: WorkspaceNode[]; activ
   if (legacyCode) localStorage.removeItem(LEGACY_STORAGE_KEY);
 
   return { nodes, activeFileId: welcomeId };
+}
+
+/** Drop the legacy root DSA folder (and its children) from older workspaces. */
+async function removeLegacyDsaFolder(nodes: WorkspaceNode[]): Promise<WorkspaceNode[]> {
+  const dsaRoots = nodes.filter((node) => node.type === 'folder' && node.parentId === null && node.name === 'DSA');
+  if (dsaRoots.length === 0) return nodes;
+
+  const removeIds = new Set<string>();
+  const queue = dsaRoots.map((node) => node.id);
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    removeIds.add(id);
+    for (const child of nodes) {
+      if (child.parentId === id && !removeIds.has(child.id)) queue.push(child.id);
+    }
+  }
+
+  await Promise.all([...removeIds].map((id) => workspaceDb.deleteNode(id)));
+  return nodes.filter((node) => !removeIds.has(node.id));
+}
+
+/** Ensure Practice/welcome.js exists and is the default active file. */
+async function ensureWelcomeFile(nodes: WorkspaceNode[]): Promise<{ nodes: WorkspaceNode[]; welcomeId: string }> {
+  let nextNodes = nodes;
+
+  let practice = nextNodes.find(
+    (node) => node.type === 'folder' && node.parentId === null && node.name === 'Practice',
+  );
+  if (!practice) {
+    practice = {
+      id: makeId(),
+      name: 'Practice',
+      type: 'folder',
+      parentId: null,
+      updatedAt: Date.now(),
+    };
+    await workspaceDb.putNode(practice);
+    nextNodes = [...nextNodes, practice];
+  }
+
+  let welcome =
+    nextNodes.find((node) => node.type === 'file' && node.parentId === practice!.id && node.name === 'welcome.js') ??
+    nextNodes.find((node) => node.type === 'file' && node.name === 'welcome.js');
+
+  if (!welcome) {
+    welcome = {
+      id: makeId(),
+      name: 'welcome.js',
+      type: 'file',
+      parentId: practice.id,
+      content: DEFAULT_CODE,
+      updatedAt: Date.now(),
+    };
+    await workspaceDb.putNode(welcome);
+    nextNodes = [...nextNodes, welcome];
+  }
+
+  await workspaceDb.setActiveFileId(welcome.id);
+  return { nodes: nextNodes, welcomeId: welcome.id };
 }
 
 type LocalFolderApi = {
@@ -173,11 +230,14 @@ export function useWorkspace(localFolder: LocalFolderApi) {
     (nextCode: string, source: EditorSource) => {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
-        if (source.kind === 'workspace') void persistWorkspaceFile(source.fileId, nextCode);
-        else void persistLocalDraft(source.path, nextCode);
+        void (async () => {
+          if (source.kind === 'workspace') await persistWorkspaceFile(source.fileId, nextCode);
+          else await persistLocalDraft(source.path, nextCode);
+          clearTabDirty(tabIdFromSource(source));
+        })();
       }, SAVE_DEBOUNCE_MS);
     },
-    [persistLocalDraft, persistWorkspaceFile],
+    [clearTabDirty, persistLocalDraft, persistWorkspaceFile],
   );
 
   const updateCode = useCallback(
@@ -209,6 +269,7 @@ export function useWorkspace(localFolder: LocalFolderApi) {
         const nextTab: EditorTab = { id: tabId, kind: 'workspace', name: file.name, fileId: tab.fileId };
 
         tabContentsRef.current[tabId] = nextContent;
+        clearTabDirty(tabId);
         setOpenTabs((prev) => {
           const exists = prev.some((item) => item.id === tabId);
           const nextTabs = exists
@@ -259,6 +320,7 @@ export function useWorkspace(localFolder: LocalFolderApi) {
         const nextTab: EditorTab = { id: tabId, kind: 'local', name: entry.name, path: entry.path };
 
         tabContentsRef.current[tabId] = nextContent;
+        clearTabDirty(tabId);
         setOpenTabs((prev) => {
           const exists = prev.some((item) => item.id === tabId);
           const nextTabs = exists
@@ -278,6 +340,7 @@ export function useWorkspace(localFolder: LocalFolderApi) {
       }
     },
     [
+      clearTabDirty,
       flushSave,
       localFolder,
       persistEditorSource,
@@ -319,21 +382,19 @@ export function useWorkspace(localFolder: LocalFolderApi) {
       }
 
       if (nextTabs.length === 0) {
-        setActiveTabId(null);
-        setEditorSource(null);
-        setActiveFileId(null);
-        setCode('');
-        localFolder.setActiveLocalPath(null);
-        await workspaceDb.setActiveFileId(null);
-        await persistEditorSource(null);
-        await persistTabsMeta([], null);
+        const ensured = await ensureWelcomeFile(await refreshNodes());
+        setNodes(ensured.nodes);
+        const welcome = ensured.nodes.find((node) => node.id === ensured.welcomeId && node.type === 'file');
+        if (welcome) {
+          await openTab(editorTabFromSource({ kind: 'workspace', fileId: welcome.id, name: welcome.name }));
+        }
         return;
       }
 
       const nextTab = nextTabs[Math.min(index, nextTabs.length - 1)];
       await openTab(nextTab);
     },
-    [clearTabDirty, flushSave, localFolder, openTab, persistEditorSource, persistTabsMeta],
+    [clearTabDirty, flushSave, openTab, persistTabsMeta, refreshNodes],
   );
 
   const openWorkspaceFile = useCallback(
@@ -444,19 +505,16 @@ export function useWorkspace(localFolder: LocalFolderApi) {
         );
         setOpenTabs(remainingTabs);
 
-        const fallback = nextNodes.find((node) => node.type === 'file');
+        const fallback = nextNodes.find((node) => node.type === 'file' && node.name === 'welcome.js')
+          ?? nextNodes.find((node) => node.type === 'file');
         if (fallback && remainingTabs.length === 0) {
           await openWorkspaceFile(fallback.id);
         } else if (remainingTabs.length > 0 && tabsToClose.some((tab) => tab.id === activeTabIdRef.current)) {
           await openTab(remainingTabs[0]);
         } else if (remainingTabs.length === 0) {
-          setActiveTabId(null);
-          setEditorSource(null);
-          setActiveFileId(null);
-          setCode('');
-          await workspaceDb.setActiveFileId(null);
-          await persistEditorSource(null);
-          await persistTabsMeta([], null);
+          const ensured = await ensureWelcomeFile(nextNodes);
+          setNodes(ensured.nodes);
+          await openWorkspaceFile(ensured.welcomeId);
         } else {
           await persistTabsMeta(remainingTabs, activeTabIdRef.current);
         }
@@ -526,21 +584,17 @@ export function useWorkspace(localFolder: LocalFolderApi) {
   const loadSnippet = useCallback(
     async (snippetCode: string) => {
       const source = editorSourceRef.current;
-      if (source?.kind === 'workspace') {
+      if (source?.kind === 'local' || source?.kind === 'workspace') {
         updateCode(snippetCode);
         return;
       }
 
-      if (source?.kind === 'local') {
-        updateCode(snippetCode);
-        return;
-      }
-
-      const created = await createFile(selectedFolderId, 'snippet.js');
-      await persistWorkspaceFile(created.id, snippetCode);
-      await openWorkspaceFile(created.id);
+      const ensured = await ensureWelcomeFile(await refreshNodes());
+      setNodes(ensured.nodes);
+      await persistWorkspaceFile(ensured.welcomeId, snippetCode);
+      await openWorkspaceFile(ensured.welcomeId);
     },
-    [createFile, openWorkspaceFile, persistWorkspaceFile, selectedFolderId, updateCode],
+    [openWorkspaceFile, persistWorkspaceFile, refreshNodes, updateCode],
   );
 
   const toggleFolder = useCallback((folderId: string) => {
@@ -553,37 +607,45 @@ export function useWorkspace(localFolder: LocalFolderApi) {
     });
   }, []);
 
+  const setExpandedFolders = useCallback((ids: Iterable<string>) => {
+    const next = new Set(ids);
+    setExpandedFolderIds(next);
+    void workspaceDb.setMeta('expandedFolderIds', [...next]);
+  }, []);
+
   const bootstrappedRef = useRef(false);
 
   useEffect(() => {
     void (async () => {
       let nextNodes = await workspaceDb.getAllNodes();
-      let nextActiveId = await workspaceDb.getActiveFileId();
 
       if (nextNodes.length === 0) {
         const created = await createDefaultWorkspace();
         nextNodes = created.nodes;
-        nextActiveId = created.activeFileId;
+      } else {
+        nextNodes = await removeLegacyDsaFolder(nextNodes);
       }
 
-      const [savedSelectedFolder, savedExpanded, savedOpenTabs, savedActiveTabId] = await Promise.all([
+      const ensured = await ensureWelcomeFile(nextNodes);
+      nextNodes = ensured.nodes;
+
+      const [savedSelectedFolder, savedExpanded] = await Promise.all([
         workspaceDb.getMeta<string>('selectedFolderId'),
         workspaceDb.getMeta<string[]>('expandedFolderIds'),
-        workspaceDb.getMeta<EditorTab[]>('openEditorTabs'),
-        workspaceDb.getMeta<string>('activeEditorTabId'),
       ]);
 
-      setNodes(nextNodes);
-      setActiveFileId(nextActiveId);
-      if (savedSelectedFolder) setSelectedFolderIdState(savedSelectedFolder);
-      if (savedExpanded) setExpandedFolderIds(new Set(savedExpanded));
+      const practiceId = nextNodes.find(
+        (node) => node.type === 'folder' && node.parentId === null && node.name === 'Practice',
+      )?.id;
 
-      const restoredTabs = (savedOpenTabs ?? []).filter((tab) => tab.id && tab.name && tab.kind);
-      if (restoredTabs.length > 0) {
-        setOpenTabs(restoredTabs);
-        const tabToOpen = restoredTabs.find((tab) => tab.id === savedActiveTabId) ?? restoredTabs[0];
-        setActiveTabId(tabToOpen.id);
-      }
+      setNodes(nextNodes);
+      setActiveFileId(ensured.welcomeId);
+      setSelectedFolderIdState(savedSelectedFolder ?? practiceId ?? null);
+
+      const expanded = new Set(savedExpanded ?? []);
+      if (practiceId) expanded.add(practiceId);
+      setExpandedFolderIds(expanded);
+      void workspaceDb.setMeta('expandedFolderIds', [...expanded]);
 
       setReady(true);
     })();
@@ -594,37 +656,12 @@ export function useWorkspace(localFolder: LocalFolderApi) {
 
     void (async () => {
       bootstrappedRef.current = true;
-
-      if (openTabsRef.current.length > 0 && activeTabIdRef.current) {
-        const tab = openTabsRef.current.find((item) => item.id === activeTabIdRef.current);
-        if (tab) {
-          await openTab(tab);
-          return;
-        }
-      }
-
-      const [savedSourceKind, savedSourceId] = await Promise.all([
-        workspaceDb.getMeta<'workspace' | 'local'>('editorSourceKind'),
-        workspaceDb.getMeta<string>('editorSourceId'),
-      ]);
-
-      if (savedSourceKind === 'local' && savedSourceId) {
-        const entry = localFolder.findLocalEntry(savedSourceId);
-        if (entry) {
-          await openLocalFile(entry);
-          return;
-        }
-      }
-
-      const nextActiveId = await workspaceDb.getActiveFileId();
-      const allNodes = await workspaceDb.getAllNodes();
-      const fileId = savedSourceKind === 'workspace' && savedSourceId ? savedSourceId : nextActiveId;
-      if (fileId) {
-        const file = allNodes.find((node) => node.id === fileId && node.type === 'file');
-        if (file) await openWorkspaceFile(file.id);
-      }
+      const allNodes = await refreshNodes();
+      const ensured = await ensureWelcomeFile(allNodes);
+      setNodes(ensured.nodes);
+      await openWorkspaceFile(ensured.welcomeId);
     })();
-  }, [localFolder, openLocalFile, openTab, openWorkspaceFile, ready]);
+  }, [localFolder.ready, openWorkspaceFile, ready, refreshNodes]);
 
   useEffect(() => {
     const saveBeforeExit = () => {
@@ -670,6 +707,8 @@ export function useWorkspace(localFolder: LocalFolderApi) {
     saveLocalFile,
     loadSnippet,
     toggleFolder,
+    setExpandedFolders,
     flushSave,
+    refreshNodes,
   };
 }

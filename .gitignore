@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*.local
 vite
 js-playground@0.0.0
 

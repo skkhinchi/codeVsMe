@@ -8,7 +8,7 @@ import {
 } from '@codemirror/autocomplete';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { javascript } from '@codemirror/lang-javascript';
-import { Compartment, EditorState, Prec } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { playgroundCompletionSources } from '../editor/completions';
@@ -22,9 +22,12 @@ type CodeEditorProps = {
   onChange: (value: string) => void;
   lineWrap: boolean;
   onRun: (code: string) => void;
+  canRun?: boolean;
 };
 
 const wrapCompartment = new Compartment();
+/** Marks doc updates that came from React props, not user typing. */
+const ExternalSync = Annotation.define<boolean>();
 
 const editorKeymap = defaultKeymap.filter((binding) => binding.key !== 'Mod-Enter');
 
@@ -37,16 +40,18 @@ const dotCompletionTrigger = EditorView.inputHandler.of((view, _from, _to, text)
 });
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { value, onChange, lineWrap, onRun },
+  { value, onChange, lineWrap, onRun, canRun = true },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onRunRef = useRef(onRun);
+  const canRunRef = useRef(canRun);
 
   onChangeRef.current = onChange;
   onRunRef.current = onRun;
+  canRunRef.current = canRun;
 
   useImperativeHandle(ref, () => ({
     getCode: () => viewRef.current?.state.doc.toString() ?? value,
@@ -76,6 +81,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
               {
                 key: 'Mod-Enter',
                 run: (editorView) => {
+                  if (!canRunRef.current) return true;
                   onRunRef.current(editorView.state.doc.toString());
                   return true;
                 },
@@ -84,9 +90,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           ),
           keymap.of([...completionKeymap, ...closeBracketsKeymap, ...editorKeymap, indentWithTab]),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              onChangeRef.current(update.state.doc.toString());
-            }
+            if (!update.docChanged) return;
+            const fromExternal = update.transactions.some((tr) => tr.annotation(ExternalSync));
+            if (fromExternal) return;
+            onChangeRef.current(update.state.doc.toString());
           }),
         ],
       }),
@@ -108,6 +115,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     if (current !== value) {
       view.dispatch({
         changes: { from: 0, to: current.length, insert: value },
+        annotations: ExternalSync.of(true),
       });
     }
   }, [value]);

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { AuthModal } from './components/Auth/AuthModal';
+import { UserMenu } from './components/Auth/UserMenu';
 import { CodeEditor, type CodeEditorHandle } from './components/CodeEditor';
 import { EditorTabBar } from './components/EditorTabBar';
 import { FileExplorer } from './components/FileExplorer/FileExplorer';
@@ -8,6 +10,7 @@ import { OutputTabs } from './components/OutputTabs';
 import { SplitPane } from './components/SplitPane';
 import { UiProvider, useUi } from './components/ui/UiProvider';
 import { DSA_CATEGORIES, EXAMPLE_SNIPPETS } from './data/snippets';
+import { useAuth, type AuthApi } from './hooks/useAuth';
 import { useCodeRunner, type OutputLine } from './hooks/useCodeRunner';
 import { useLocalFolder } from './hooks/useLocalFolder';
 import { useRepl } from './hooks/useRepl';
@@ -15,6 +18,7 @@ import { useWorkspace } from './hooks/useWorkspace';
 import * as workspaceDb from './storage/workspaceDb';
 import type { LearnChatContext } from './types/chat';
 import { getTabBreadcrumb } from './utils/editorTabs';
+import { isRunnableJavaScriptFile } from './utils/runnableFiles';
 import './App.css';
 
 function formatOutputForChat(lines: OutputLine[]) {
@@ -26,7 +30,7 @@ function formatOutputForChat(lines: OutputLine[]) {
     .join('\n');
 }
 
-function AppContent() {
+function AppContent({ auth }: { auth: AuthApi }) {
   const { toast, prompt } = useUi();
   const [lineWrap, setLineWrapState] = useState(false);
   const [explorerOpen, setExplorerOpenState] = useState(true);
@@ -81,6 +85,8 @@ function AppContent() {
   const activeDsaCategory = DSA_CATEGORIES.find((category) => category.id === selectedDsaCategory);
 
   const handleRun = (source?: string) => {
+    const fileName = workspace.editorSource?.name;
+    if (!isRunnableJavaScriptFile(fileName)) return;
     run(source ?? editorRef.current?.getCode() ?? workspace.code);
   };
 
@@ -151,15 +157,37 @@ function AppContent() {
     await workspace.openWorkspaceFile(fileId);
   };
 
+  const handleCreateWorkspaceFile = async (parentId: string | null) => {
+    const name = await prompt({
+      title: 'New file',
+      label: 'File name',
+      placeholder: 'my-file.js',
+      submitLabel: 'Create',
+    });
+    if (!name) return;
+    await workspace.createFile(parentId, name.trim());
+  };
+
+  const handleCreateWorkspaceFolder = async (parentId: string | null) => {
+    const name = await prompt({
+      title: 'New folder',
+      label: 'Folder name',
+      placeholder: 'My folder',
+      submitLabel: 'Create',
+    });
+    if (!name) return;
+    await workspace.createFolder(parentId, name.trim());
+  };
+
   const handleCreateLocalFile = async (parentPath: string | null) => {
     const name = await prompt({
       title: 'New file',
       label: 'File name',
-      defaultValue: 'untitled.js',
+      placeholder: 'my-file.js',
       submitLabel: 'Create',
     });
     if (!name) return;
-    const entry = await localFolder.createLocalFile(name, parentPath);
+    const entry = await localFolder.createLocalFile(name.trim(), parentPath);
     if (entry) await handleOpenLocalFile(entry);
   };
 
@@ -167,11 +195,11 @@ function AppContent() {
     const name = await prompt({
       title: 'New folder',
       label: 'Folder name',
-      defaultValue: 'New Folder',
+      placeholder: 'My folder',
       submitLabel: 'Create',
     });
     if (!name) return;
-    await localFolder.createLocalFolder(name, parentPath);
+    await localFolder.createLocalFolder(name.trim(), parentPath);
   };
 
   if (!workspace.ready || !localFolder.ready || !uiReady) {
@@ -184,6 +212,7 @@ function AppContent() {
 
   const activeTab = workspace.openTabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
   const tabBreadcrumb = getTabBreadcrumb(activeTab, workspace.nodes, localFolder.folderName);
+  const canRun = isRunnableJavaScriptFile(workspace.editorSource?.name ?? activeTab?.name);
 
   return (
     <div className="app">
@@ -195,6 +224,13 @@ function AppContent() {
             <p>Infinite Challenge. Infinite Growth.</p>
           </div>
         </div>
+        {auth.user ? (
+          <UserMenu user={auth.user} onLogout={auth.logout} />
+        ) : (
+          <button type="button" className="btn btn--signin" onClick={auth.openModal}>
+            Sign in
+          </button>
+        )}
       </header>
 
       <SplitPane
@@ -217,20 +253,30 @@ function AppContent() {
               onSelectFolder={handleSelectFolder}
               onSelectLocalFolder={localFolder.setSelectedLocalFolderPath}
               onToggleFolder={workspace.toggleFolder}
+              onSetExpandedFolders={workspace.setExpandedFolders}
               onOpenWorkspaceFile={handleOpenWorkspaceFile}
               onOpenLocalFile={handleOpenLocalFile}
               onToggleLocalPath={localFolder.toggleLocalPath}
-              onCreateFile={workspace.createFile}
-              onCreateFolder={workspace.createFolder}
+              onSetExpandedLocalPaths={localFolder.setExpandedPaths}
+              onCreateFile={handleCreateWorkspaceFile}
+              onCreateFolder={handleCreateWorkspaceFolder}
               onCreateLocalFile={handleCreateLocalFile}
               onCreateLocalFolder={handleCreateLocalFolder}
               onDeleteWorkspaceNode={workspace.deleteNode}
               onRenameWorkspaceNode={workspace.renameNode}
-              onImportFile={(file) => workspace.importFileToWorkspace(file, workspace.selectedFolderId)}
+              onImportFile={(file, parentId) =>
+                workspace.importFileToWorkspace(file, parentId ?? workspace.selectedFolderId)
+              }
               onOpenLocalFolder={localFolder.openFolder}
               onReconnectLocalFolder={() => void localFolder.reconnectFolder()}
               onDeleteLocalFile={localFolder.deleteLocalFile}
               onDeleteLocalFolder={localFolder.deleteLocalFolder}
+              onRefreshWorkspace={() => {
+                void workspace.refreshNodes();
+              }}
+              onRefreshLocal={() => {
+                if (localFolder.dirHandle) void localFolder.refreshFiles(localFolder.dirHandle);
+              }}
               collapsed={!explorerOpen}
               onToggleCollapse={toggleExplorer}
             />
@@ -255,7 +301,7 @@ function AppContent() {
                     Snippets
                   </button>
                   <div className="panel-toolbar__right">
-                    <span className="hint">Ctrl+Enter / Cmd+Enter</span>
+                    <span className="hint">{canRun ? 'Ctrl+Enter / Cmd+Enter' : 'Run is only available for .js files'}</span>
                     <label className="toggle">
                       <input
                         type="checkbox"
@@ -277,7 +323,13 @@ function AppContent() {
                     <button type="button" className="btn" onClick={() => void handleSave()}>
                       Save
                     </button>
-                    <button type="button" className="btn btn--primary" onClick={() => handleRun()}>
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      onClick={() => handleRun()}
+                      disabled={!canRun}
+                      title={canRun ? 'Run JavaScript' : 'Only .js files can be run'}
+                    >
                       Run
                     </button>
                   </div>
@@ -338,6 +390,7 @@ function AppContent() {
                 onChange={workspace.updateCode}
                 lineWrap={lineWrap}
                 onRun={handleRun}
+                canRun={canRun}
               />
             </div>
           </div>
@@ -361,10 +414,43 @@ function AppContent() {
   );
 }
 
+function AuthenticatedApp() {
+  const auth = useAuth();
+  const { toast } = useUi();
+
+  if (!auth.ready) {
+    return (
+      <div className="app app--loading">
+        <p>Loading…</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <AuthModal
+        open={auth.showModal}
+        onGuest={auth.continueAsGuest}
+        onClose={auth.continueAsGuest}
+        onCredential={(credential) => {
+          try {
+            auth.handleCredential(credential);
+            toast.success('Signed in with Google');
+          } catch (error) {
+            console.error(error);
+            toast.error('Google sign-in failed. Please try again.');
+          }
+        }}
+      />
+      <AppContent key={auth.workspaceScope} auth={auth} />
+    </>
+  );
+}
+
 function App() {
   return (
     <UiProvider>
-      <AppContent />
+      <AuthenticatedApp />
     </UiProvider>
   );
 }

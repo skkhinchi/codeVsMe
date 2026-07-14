@@ -295,6 +295,15 @@ export function useLocalFolder() {
     [activeLocalPath, explorerSection, folderName, persistLocalUi, selectedLocalFolderPath],
   );
 
+  const setExpandedPaths = useCallback(
+    (paths: Iterable<string>) => {
+      const next = new Set(paths);
+      setExpandedLocalPaths(next);
+      void persistLocalUi(next, activeLocalPath, selectedLocalFolderPath, explorerSection, folderName);
+    },
+    [activeLocalPath, explorerSection, folderName, persistLocalUi, selectedLocalFolderPath],
+  );
+
   const openFolder = useCallback(async () => {
     if (!supported) {
       setError('Local folders need Chrome or Edge.');
@@ -496,6 +505,7 @@ export function useLocalFolder() {
     setSelectedLocalFolderPath,
     setExplorerSection,
     toggleLocalPath,
+    setExpandedPaths,
     openFolder,
     reconnectFolder,
     createLocalFile,

@@ -1,0 +1,138 @@
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(1, 4, 9, 0.78);
+  backdrop-filter: blur(3px);
+  animation: auth-overlay-in 0.18s ease;
+}
+
+.auth-modal {
+  position: relative;
+  width: min(400px, 100%);
+  padding: 1.5rem 1.35rem 1.35rem;
+  border-radius: 12px;
+  border: 1px solid #30363d;
+  background: #161b22;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.5);
+  animation: auth-modal-in 0.2s ease;
+  text-align: center;
+}
+
+.auth-modal__close {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.7rem;
+  border: none;
+  background: transparent;
+  color: #8b949e;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 6px;
+}
+
+.auth-modal__close:hover {
+  color: #e6edf3;
+  background: #21262d;
+}
+
+.auth-modal__brand {
+  margin-bottom: 1.25rem;
+}
+
+.auth-modal__logo {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: 10px;
+  margin-bottom: 0.85rem;
+}
+
+.auth-modal__title {
+  margin: 0 0 0.45rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  background: linear-gradient(90deg, #e6edf3 0%, #79c0ff 45%, #a371f7 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.auth-modal__subtitle {
+  margin: 0;
+  color: #8b949e;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.auth-modal__google {
+  display: flex;
+  justify-content: center;
+  min-height: 40px;
+  margin-bottom: 0.35rem;
+}
+
+.auth-modal__hint {
+  margin: 0.65rem 0 0;
+  color: #d29922;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.auth-modal__hint code {
+  font-size: 0.72rem;
+  color: #e3b341;
+}
+
+.auth-modal__divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0 0.9rem;
+  color: #484f58;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.auth-modal__divider::before,
+.auth-modal__divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #30363d;
+}
+
+.auth-modal__guest {
+  width: 100%;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+}
+
+@keyframes auth-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes auth-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

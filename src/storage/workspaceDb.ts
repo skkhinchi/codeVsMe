@@ -1,11 +1,31 @@
 import type { WorkspaceNode } from '../types/workspace';
 
-const DB_NAME = 'js-playground-workspace';
+const LEGACY_GUEST_DB_NAME = 'js-playground-workspace';
 const DB_VERSION = 2;
 const NODES_STORE = 'nodes';
 const META_STORE = 'meta';
 const HANDLES_STORE = 'handles';
 const DRAFTS_STORE = 'drafts';
+
+/** Active IndexedDB namespace — guest keeps the legacy DB name so existing work still loads. */
+let workspaceScope = 'guest';
+
+export function workspaceScopeFromEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+export function setWorkspaceScope(scope: string): void {
+  workspaceScope = scope.trim().toLowerCase() || 'guest';
+}
+
+export function getWorkspaceScope(): string {
+  return workspaceScope;
+}
+
+function dbNameForScope(scope: string): string {
+  if (scope === 'guest') return LEGACY_GUEST_DB_NAME;
+  return `js-playground-workspace:${encodeURIComponent(scope)}`;
+}
 
 export type MetaKey =
   | 'activeFileId'
@@ -37,7 +57,7 @@ export type LocalFileDraft = {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(dbNameForScope(workspaceScope), DB_VERSION);
 
     request.onupgradeneeded = () => {
       const db = request.result;

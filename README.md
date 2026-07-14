@@ -11,6 +11,7 @@ A lightweight JavaScript compiler/playground that runs entirely in the browser.
 ## Features
 
 - Split-screen editor and output panel with a resizable divider
+- Sign in with Google (GIS) or continue as guest — workspace files scoped per account
 - JavaScript syntax highlighting, line numbers, oneDark theme
 - Syntax-only autocomplete (keywords and built-in globals)
 - Auto-closing brackets and quotes
@@ -20,7 +21,7 @@ A lightweight JavaScript compiler/playground that runs entirely in the browser.
 - Async/await and timer support
 - 2-second execution timeout to stop infinite loops (shows "Execution timed out" only while code is still running)
 - Line-wrap toggle
-- Code persisted in `localStorage`
+- Workspace files persisted in IndexedDB (scoped by Google email or guest)
 - Starter examples and DSA template library (two dropdowns: topic + template)
 - File explorer with folders — create, delete, rename, auto-save (IndexedDB)
 - Import files from computer into workspace
@@ -44,6 +45,48 @@ npm run dev
 ```
 
 Open **http://localhost:5173** — the app always runs on this port.
+
+## Sign in with Google (optional)
+
+This app uses **Google Identity Services** in the browser only (no backend). Copy `.env.example` to `.env` and set your Client ID:
+
+```bash
+cp .env.example .env
+```
+
+```env
+VITE_GOOGLE_CLIENT_ID=123456789-xxxx.apps.googleusercontent.com
+```
+
+Restart `npm run dev` after changing `.env`.
+
+### Get a Google Client ID
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/)
+2. Create or select a project
+3. Go to **APIs & Services → OAuth consent screen**
+   - User type: **External** (or Internal for Workspace-only)
+   - App name, support email, developer contact → Save
+   - Add scopes if prompted: `openid`, `email`, `profile` (GIS Sign In with Google provides these by default)
+   - Add your Google account as a **Test user** while the app is in Testing
+4. Go to **APIs & Services → Credentials → Create credentials → OAuth client ID**
+   - Application type: **Web application**
+   - Name: e.g. `Code v/s Me`
+   - **Authorized JavaScript origins**
+     - Local: `http://localhost:5173`
+     - Production: `https://skkhinchi.github.io`
+   - Leave **Authorized redirect URIs** empty for GIS button/One Tap
+5. Copy the Client ID into `.env` as `VITE_GOOGLE_CLIENT_ID`
+6. For GitHub Pages deploys, add the same value as a repo secret named `VITE_GOOGLE_CLIENT_ID` (**Settings → Secrets and variables → Actions**)
+
+You can still use **Continue as Guest** without configuring Google.
+
+### Auth behavior
+
+- Signed-in users are stored in `localStorage` under `currentUser` (name, email, picture)
+- Guest choice is remembered via `continueAsGuest`
+- IndexedDB workspaces are scoped by email (guest keeps the original DB so existing local work is preserved)
+- Escape, the × button, and click-outside dismiss the modal as guest
 
 ## Build
 

@@ -392,7 +392,7 @@ function AppContent({ auth }: { auth: AuthApi }) {
     <div className="app">
       <header className="app-header">
         <div className="app-header__brand">
-          <a href="https://www.codevsme.com/" className="app-header__brand-link">
+          <a href="http://sumit.codevsme.com/" className="app-header__brand-link">
             <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="app-header__logo" />
             <div className="app-header__text">
               <h1>Code v/s Me</h1>

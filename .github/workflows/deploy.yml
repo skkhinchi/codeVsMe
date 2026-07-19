@@ -33,7 +33,6 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          GITHUB_PAGES: 'true'
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
 
       - name: Upload artifact

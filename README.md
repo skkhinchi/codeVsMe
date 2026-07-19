@@ -109,10 +109,11 @@ This repo includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) th
 
 After the first successful deploy:
 
-**https://skkhinchi.github.io/codeVsMe/**
+**https://www.codevsme.com/**
 
 ### Notes
 
 - Local dev still uses `npm run dev` at `http://localhost:5173`
-- Production builds set `GITHUB_PAGES=true` so asset paths work under `/codeVsMe/`
+- Production uses `base: '/'` for the custom domain (assets load from `/assets/...`)
+- Add Google OAuth **Authorized JavaScript origins**: `https://www.codevsme.com` and `https://codevsme.com`
 - **File System Access API** (local folder editing) requires Chrome/Edge and may not work the same on the hosted site; workspace files in IndexedDB still work

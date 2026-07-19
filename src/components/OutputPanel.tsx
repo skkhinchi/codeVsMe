@@ -6,6 +6,8 @@ import { HappyPanda } from './mascot/HappyPanda';
 type OutputPanelProps = {
   lines: OutputLine[];
   runOutcome: RunOutcome;
+  /** When false, skip panda mascots (e.g. mobile view). */
+  showMascot?: boolean;
 };
 
 function formatLine(line: OutputLine): string {
@@ -15,7 +17,7 @@ function formatLine(line: OutputLine): string {
   return line.text;
 }
 
-export function OutputPanel({ lines, runOutcome }: OutputPanelProps) {
+export function OutputPanel({ lines, runOutcome, showMascot = true }: OutputPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasRunError = useMemo(
     () => runOutcome === 'error' || lines.some((line) => line.kind === 'runtime-error' || line.kind === 'error'),
@@ -23,6 +25,7 @@ export function OutputPanel({ lines, runOutcome }: OutputPanelProps) {
   );
   const showSuccess = runOutcome === 'success' && !hasRunError;
   const showError = hasRunError;
+  const useMascot = showMascot && (showError || showSuccess);
   const bubbleError = useMemo(() => {
     const errorLine = [...lines].reverse().find((line) => line.kind === 'runtime-error' || line.kind === 'error');
     return errorLine ? formatLine(errorLine) : 'Execution failed.';
@@ -47,7 +50,10 @@ export function OutputPanel({ lines, runOutcome }: OutputPanelProps) {
   if (showError) {
     return (
       <div className="output-panel output-panel--error" role="log" aria-label="Console output" aria-live="assertive">
-        <div ref={scrollRef} className="output-panel__scroll output-panel__scroll--with-mascot">
+        <div
+          ref={scrollRef}
+          className={`output-panel__scroll${useMascot ? ' output-panel__scroll--with-mascot' : ''}`}
+        >
           <p className="output-panel__error-kicker">Something went wrong</p>
           {lines.length === 0 ? (
             <p className="output-empty">Execution failed.</p>
@@ -59,9 +65,11 @@ export function OutputPanel({ lines, runOutcome }: OutputPanelProps) {
             ))
           )}
         </div>
-        <div className="output-panel__mascot">
-          <ErrorPanda message={bubbleError} />
-        </div>
+        {useMascot ? (
+          <div className="output-panel__mascot">
+            <ErrorPanda message={bubbleError} />
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -69,7 +77,10 @@ export function OutputPanel({ lines, runOutcome }: OutputPanelProps) {
   if (showSuccess) {
     return (
       <div className="output-panel output-panel--success" role="log" aria-label="Console output" aria-live="polite">
-        <div ref={scrollRef} className="output-panel__scroll output-panel__scroll--with-mascot">
+        <div
+          ref={scrollRef}
+          className={`output-panel__scroll${useMascot ? ' output-panel__scroll--with-mascot' : ''}`}
+        >
           <p className="output-panel__success-kicker">Code run successfully</p>
           {lines.length === 0 ? (
             <p className="output-empty">Finished with no console output.</p>
@@ -81,9 +92,11 @@ export function OutputPanel({ lines, runOutcome }: OutputPanelProps) {
             ))
           )}
         </div>
-        <div className="output-panel__mascot">
-          <HappyPanda />
-        </div>
+        {useMascot ? (
+          <div className="output-panel__mascot">
+            <HappyPanda />
+          </div>
+        ) : null}
       </div>
     );
   }

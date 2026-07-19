@@ -14,6 +14,7 @@ import { useAuth, type AuthApi } from './hooks/useAuth';
 import { useCodeRunner, type OutputLine } from './hooks/useCodeRunner';
 import { useEventLoopVisualizer } from './hooks/useEventLoopVisualizer';
 import { useLocalFolder } from './hooks/useLocalFolder';
+import { usePhoneViewport } from './hooks/usePhoneViewport';
 import { useRepl } from './hooks/useRepl';
 import { useWorkspace } from './hooks/useWorkspace';
 import * as workspaceDb from './storage/workspaceDb';
@@ -63,6 +64,9 @@ function AppContent({ auth }: { auth: AuthApi }) {
   const repl = useRepl();
   const [outputTab, setOutputTab] = useState<OutputTab>('console');
   const [webViewHtml, setWebViewHtml] = useState<string | null>(null);
+  const isPhoneViewport = usePhoneViewport();
+  const [mobileOverride, setMobileOverride] = useState<boolean | null>(null);
+  const mobileView = mobileOverride ?? isPhoneViewport;
 
   const localFolder = useLocalFolder();
   const workspace = useWorkspace(localFolder);
@@ -339,6 +343,26 @@ function AppContent({ auth }: { auth: AuthApi }) {
     }
   }, [canUseSnippets, snippetsOpen]);
 
+  useEffect(() => {
+    // Crossing phone ↔ tablet/desktop clears manual toggle so auto layout wins again.
+    setMobileOverride(null);
+  }, [isPhoneViewport]);
+
+  useEffect(() => {
+    if (!mobileView) return;
+    setChatOpen(false);
+    setSnippetsOpenState(false);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOverride(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mobileView]);
+
+  const toggleMobileView = () => {
+    setMobileOverride(!(mobileOverride ?? isPhoneViewport));
+  };
+
   if (!workspace.ready || !localFolder.ready || !uiReady) {
     return (
       <div className="app app--loading" role="status" aria-live="polite">
@@ -397,7 +421,7 @@ function AppContent({ auth }: { auth: AuthApi }) {
       : 'Only .js, .html, and .css files can be run';
 
   return (
-    <div className="app">
+    <div className={`app ${mobileView ? 'app--mobile' : ''}`}>
       <header className="app-header">
         <div className="app-header__brand">
           <a href="http://sumit.codevsme.com/" className="app-header__brand-link">
@@ -409,6 +433,23 @@ function AppContent({ auth }: { auth: AuthApi }) {
           </a>
         </div>
         <div className="app-header__actions">
+          <button
+            type="button"
+            className={`btn btn--mobile ${mobileView ? 'btn--mobile-active' : ''}`}
+            onClick={toggleMobileView}
+            aria-pressed={mobileView}
+            title={
+              mobileView
+                ? 'Exit mobile view (Esc)'
+                : 'Mobile view — vertical layout for phones / recording'
+            }
+          >
+            <svg className="btn--mobile__icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">
+              <rect x="7" y="2" width="10" height="20" rx="2.5" stroke="currentColor" strokeWidth="1.75" />
+              <circle cx="12" cy="18.5" r="1" fill="currentColor" />
+            </svg>
+            <span>{mobileView ? 'Exit mobile' : 'Mobile'}</span>
+          </button>
           {auth.user ? (
             <UserMenu user={auth.user} onLogout={auth.logout} />
           ) : (
@@ -441,6 +482,14 @@ function AppContent({ auth }: { auth: AuthApi }) {
           )}
         </div>
       </header>
+
+      {mobileView ? (
+        <p className="mobile-banner" role="status">
+          {isPhoneViewport
+            ? 'Mobile view · Esc or Exit mobile for full layout'
+            : 'Mobile view · record the phone frame · Esc to exit'}
+        </p>
+      ) : null}
 
       <main id="main-content" className="app-main" tabIndex={-1}>
       <SplitPane
@@ -630,6 +679,7 @@ function AppContent({ auth }: { auth: AuthApi }) {
             onTerminalPreviousInput={repl.getPreviousInput}
             onTerminalNextInput={repl.getNextInput}
             visualizer={visualizer}
+            showMascot={!mobileView}
           />
         }
       />

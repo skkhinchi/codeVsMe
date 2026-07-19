@@ -25,6 +25,7 @@ type OutputTabsProps = {
   onTerminalPreviousInput: () => string;
   onTerminalNextInput: () => string;
   visualizer: EventLoopVisualizerApi;
+  showMascot?: boolean;
 };
 
 export function OutputTabs({
@@ -43,6 +44,7 @@ export function OutputTabs({
   onTerminalPreviousInput,
   onTerminalNextInput,
   visualizer,
+  showMascot = true,
 }: OutputTabsProps) {
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -148,7 +150,7 @@ export function OutputTabs({
 
       <div role="tabpanel" id={tabPanelId} aria-labelledby={tabBtnId}>
         {activeTab === 'console' ? (
-          <OutputPanel lines={outputLines} runOutcome={runOutcome} />
+          <OutputPanel lines={outputLines} runOutcome={runOutcome} showMascot={showMascot} />
         ) : activeTab === 'terminal' ? (
           <TerminalPanel
             lines={terminalLines}

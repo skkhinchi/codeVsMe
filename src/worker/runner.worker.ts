@@ -33,11 +33,37 @@ function serialize(value: unknown): string {
 
 function extractLine(err: unknown): number | undefined {
   if (!(err instanceof Error) || !err.stack) return undefined;
-  const match = err.stack.match(/<anonymous>:(\d+):\d+/);
-  if (match) return Number.parseInt(match[1], 10);
-  const evalMatch = err.stack.match(/eval:(\d+):\d+/);
-  if (evalMatch) return Number.parseInt(evalMatch[1], 10);
-  return undefined;
+
+  // AsyncFunction wraps user code roughly as:
+  //   async function anonymous(...args) {
+  //   ${userCode}
+  //   }
+  // so V8 stack lines are offset by 2 from the user's source.
+  const ASYNC_FUNCTION_LINE_OFFSET = 2;
+
+  const match =
+    err.stack.match(/<anonymous>:(\d+):\d+/) ??
+    err.stack.match(/eval:(\d+):\d+/) ??
+    err.stack.match(/Function:(\d+):\d+/);
+
+  if (!match) return undefined;
+
+  const rawLine = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(rawLine)) return undefined;
+
+  const adjusted = rawLine - ASYNC_FUNCTION_LINE_OFFSET;
+  return adjusted > 0 ? adjusted : rawLine;
+}
+
+/** Prefer "ReferenceError: …" over a bare message so console output matches browsers. */
+function formatCaughtError(err: unknown): { message: string; line?: number } {
+  if (err instanceof Error) {
+    const name = err.name?.trim();
+    const detail = err.message?.trim() || 'Unknown error';
+    const message = name && name !== 'Error' ? `${name}: ${detail}` : detail;
+    return { message, line: extractLine(err) };
+  }
+  return { message: String(err) };
 }
 
 let consoleMessageCount = 0;
@@ -66,8 +92,8 @@ async function runCode(code: string) {
     await run(userConsole);
     post({ type: 'done' });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    post({ type: 'error', message, line: extractLine(err) });
+    const { message, line } = formatCaughtError(err);
+    post({ type: 'error', message, line });
   }
 }
 
@@ -92,8 +118,8 @@ async function runReplInput(input: string) {
     return;
   } catch (exprErr) {
     if (!(exprErr instanceof SyntaxError)) {
-      const message = exprErr instanceof Error ? exprErr.message : String(exprErr);
-      post({ type: 'error', message, line: extractLine(exprErr) });
+      const { message, line } = formatCaughtError(exprErr);
+      post({ type: 'error', message, line });
       return;
     }
   }
@@ -106,8 +132,8 @@ async function runReplInput(input: string) {
     post({ type: 'done' });
   } catch (err) {
     replSession = replSession.slice(0, -trimmed.length - 1);
-    const message = err instanceof Error ? err.message : String(err);
-    post({ type: 'error', message, line: extractLine(err) });
+    const { message, line } = formatCaughtError(err);
+    post({ type: 'error', message, line });
   }
 }
 

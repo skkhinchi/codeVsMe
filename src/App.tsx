@@ -6,7 +6,7 @@ import { EditorTabBar } from './components/EditorTabBar';
 import { FileExplorer } from './components/FileExplorer/FileExplorer';
 import { ChatIcon } from './components/LearnChat/ChatIcon';
 import { LearnChatPanel } from './components/LearnChat/LearnChatPanel';
-import { OutputTabs } from './components/OutputTabs';
+import { OutputTabs, type OutputTab } from './components/OutputTabs';
 import { SplitPane } from './components/SplitPane';
 import { UiProvider, useUi } from './components/ui/UiProvider';
 import { DSA_CATEGORIES, EXAMPLE_SNIPPETS } from './data/snippets';
@@ -18,7 +18,21 @@ import { useWorkspace } from './hooks/useWorkspace';
 import * as workspaceDb from './storage/workspaceDb';
 import type { LearnChatContext } from './types/chat';
 import { getTabBreadcrumb } from './utils/editorTabs';
-import { isRunnableJavaScriptFile } from './utils/runnableFiles';
+import {
+  buildWebPreview,
+  dirname,
+  workspaceFilePath,
+  workspacePreviewFiles,
+  type PreviewFile,
+} from './utils/htmlPreview';
+import { languageFromFileName } from './editor/languageMode';
+import {
+  isCssFile,
+  isHtmlFile,
+  isRunnableFile,
+  isRunnableJavaScriptFile,
+  isWebPreviewFile,
+} from './utils/runnableFiles';
 import './App.css';
 
 function formatOutputForChat(lines: OutputLine[]) {
@@ -42,8 +56,11 @@ function AppContent({ auth }: { auth: AuthApi }) {
   const [selectedDsaCategory, setSelectedDsaCategory] = useState('');
   const [selectedDsaSnippet, setSelectedDsaSnippet] = useState('');
   const editorRef = useRef<CodeEditorHandle>(null);
-  const { lines, run, clear } = useCodeRunner();
+  const previewRevokeRef = useRef<(() => void) | null>(null);
+  const { lines, run, clear, runOutcome } = useCodeRunner();
   const repl = useRepl();
+  const [outputTab, setOutputTab] = useState<OutputTab>('console');
+  const [webViewHtml, setWebViewHtml] = useState<string | null>(null);
 
   const localFolder = useLocalFolder();
   const workspace = useWorkspace(localFolder);
@@ -61,6 +78,13 @@ function AppContent({ auth }: { auth: AuthApi }) {
     });
   }, []);
 
+  useEffect(() => {
+    return () => {
+      previewRevokeRef.current?.();
+      previewRevokeRef.current = null;
+    };
+  }, []);
+
   const setLineWrap = (value: boolean) => {
     setLineWrapState(value);
     void workspaceDb.setMeta('lineWrap', value);
@@ -75,6 +99,7 @@ function AppContent({ auth }: { auth: AuthApi }) {
   };
 
   const toggleSnippets = () => {
+    if (!isRunnableJavaScriptFile(workspace.editorSource?.name)) return;
     setSnippetsOpenState((prev) => {
       const next = !prev;
       void workspaceDb.setMeta('snippetsOpen', next);
@@ -84,10 +109,71 @@ function AppContent({ auth }: { auth: AuthApi }) {
 
   const activeDsaCategory = DSA_CATEGORIES.find((category) => category.id === selectedDsaCategory);
 
-  const handleRun = (source?: string) => {
+  const clearWebView = () => {
+    previewRevokeRef.current?.();
+    previewRevokeRef.current = null;
+    setWebViewHtml(null);
+  };
+
+  const collectLocalPreviewFiles = async (): Promise<PreviewFile[]> => {
+    const files: PreviewFile[] = [];
+    for (const entry of localFolder.files) {
+      try {
+        const file = await entry.handle.getFile();
+        const content = await file.text();
+        files.push({ path: entry.path, content });
+      } catch {
+        // Skip unreadable files
+      }
+    }
+    return files;
+  };
+
+  const handleRun = async (source?: string) => {
     const fileName = workspace.editorSource?.name;
-    if (!isRunnableJavaScriptFile(fileName)) return;
-    run(source ?? editorRef.current?.getCode() ?? workspace.code);
+    if (!isRunnableFile(fileName)) return;
+
+    const code = source ?? editorRef.current?.getCode() ?? workspace.code;
+
+    if (isRunnableJavaScriptFile(fileName)) {
+      setOutputTab('console');
+      run(code);
+      return;
+    }
+
+    if (!isWebPreviewFile(fileName) || !workspace.editorSource) return;
+
+    let entryPath = fileName;
+    let files: PreviewFile[] = [];
+
+    if (workspace.editorSource.kind === 'workspace') {
+      entryPath = workspaceFilePath(workspace.nodes, workspace.editorSource.fileId);
+      files = workspacePreviewFiles(workspace.nodes);
+      const existing = files.find((file) => file.path === entryPath);
+      if (existing) existing.content = code;
+      else files.push({ path: entryPath, content: code });
+    } else {
+      entryPath = workspace.editorSource.path;
+      files = await collectLocalPreviewFiles();
+      const existing = files.find((file) => file.path === entryPath);
+      if (existing) existing.content = code;
+      else files.push({ path: entryPath, content: code });
+    }
+
+    previewRevokeRef.current?.();
+    const preview = buildWebPreview({
+      entryPath,
+      entryContent: code,
+      files,
+      entryIsCss: isCssFile(fileName),
+    });
+    previewRevokeRef.current = preview.revoke;
+    setWebViewHtml(preview.html);
+    setOutputTab('webview');
+
+    if (isHtmlFile(fileName)) {
+      toast.success('Opened in Web View');
+    }
   };
 
   const openLearnChat = () => {
@@ -109,6 +195,7 @@ function AppContent({ auth }: { auth: AuthApi }) {
   };
 
   const handleExampleChange = (snippetId: string) => {
+    if (!isRunnableJavaScriptFile(workspace.editorSource?.name)) return;
     setSelectedExample(snippetId);
     setSelectedDsaCategory('');
     setSelectedDsaSnippet('');
@@ -117,12 +204,14 @@ function AppContent({ auth }: { auth: AuthApi }) {
   };
 
   const handleDsaCategoryChange = (categoryId: string) => {
+    if (!isRunnableJavaScriptFile(workspace.editorSource?.name)) return;
     setSelectedDsaCategory(categoryId);
     setSelectedDsaSnippet('');
     setSelectedExample('');
   };
 
   const handleDsaSnippetChange = (snippetId: string) => {
+    if (!isRunnableJavaScriptFile(workspace.editorSource?.name)) return;
     setSelectedDsaSnippet(snippetId);
     setSelectedExample('');
     const snippet = activeDsaCategory?.snippets.find((item) => item.id === snippetId);
@@ -165,7 +254,14 @@ function AppContent({ auth }: { auth: AuthApi }) {
       submitLabel: 'Create',
     });
     if (!name) return;
-    await workspace.createFile(parentId, name.trim());
+    const trimmed = name.trim();
+    try {
+      await workspace.createFile(parentId, trimmed);
+      toast.success({ title: 'File created', message: `"${trimmed}" is ready in your workspace.` });
+    } catch (error) {
+      console.error(error);
+      toast.error({ title: 'Could not create file', message: 'Something went wrong. Please try again.' });
+    }
   };
 
   const handleCreateWorkspaceFolder = async (parentId: string | null) => {
@@ -176,7 +272,14 @@ function AppContent({ auth }: { auth: AuthApi }) {
       submitLabel: 'Create',
     });
     if (!name) return;
-    await workspace.createFolder(parentId, name.trim());
+    const trimmed = name.trim();
+    try {
+      await workspace.createFolder(parentId, trimmed);
+      toast.success({ title: 'Folder created', message: `"${trimmed}" was added to your workspace.` });
+    } catch (error) {
+      console.error(error);
+      toast.error({ title: 'Could not create folder', message: 'Something went wrong. Please try again.' });
+    }
   };
 
   const handleCreateLocalFile = async (parentPath: string | null) => {
@@ -187,8 +290,17 @@ function AppContent({ auth }: { auth: AuthApi }) {
       submitLabel: 'Create',
     });
     if (!name) return;
-    const entry = await localFolder.createLocalFile(name.trim(), parentPath);
-    if (entry) await handleOpenLocalFile(entry);
+    const trimmed = name.trim();
+    try {
+      const entry = await localFolder.createLocalFile(trimmed, parentPath);
+      if (entry) {
+        await handleOpenLocalFile(entry);
+        toast.success({ title: 'File created', message: `"${trimmed}" was written to disk.` });
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error({ title: 'Could not create file', message: 'Check folder permission and try again.' });
+    }
   };
 
   const handleCreateLocalFolder = async (parentPath: string | null) => {
@@ -199,12 +311,29 @@ function AppContent({ auth }: { auth: AuthApi }) {
       submitLabel: 'Create',
     });
     if (!name) return;
-    await localFolder.createLocalFolder(name.trim(), parentPath);
+    const trimmed = name.trim();
+    try {
+      await localFolder.createLocalFolder(trimmed, parentPath);
+      toast.success({ title: 'Folder created', message: `"${trimmed}" was created on disk.` });
+    } catch (error) {
+      console.error(error);
+      toast.error({ title: 'Could not create folder', message: 'Check folder permission and try again.' });
+    }
   };
+
+  const activeFileNameForSnippets = workspace.editorSource?.name;
+  const canUseSnippets = isRunnableJavaScriptFile(activeFileNameForSnippets);
+
+  useEffect(() => {
+    if (!canUseSnippets && snippetsOpen) {
+      setSnippetsOpenState(false);
+      void workspaceDb.setMeta('snippetsOpen', false);
+    }
+  }, [canUseSnippets, snippetsOpen]);
 
   if (!workspace.ready || !localFolder.ready || !uiReady) {
     return (
-      <div className="app app--loading">
+      <div className="app app--loading" role="status" aria-live="polite">
         <p>Loading workspace…</p>
       </div>
     );
@@ -212,27 +341,82 @@ function AppContent({ auth }: { auth: AuthApi }) {
 
   const activeTab = workspace.openTabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
   const tabBreadcrumb = getTabBreadcrumb(activeTab, workspace.nodes, localFolder.folderName);
-  const canRun = isRunnableJavaScriptFile(workspace.editorSource?.name ?? activeTab?.name);
+  const activeFileName = workspace.editorSource?.name ?? activeTab?.name;
+  const editorLanguage = languageFromFileName(activeFileName);
+  const canRun = isRunnableFile(activeFileName);
+
+  const siblingFiles = (() => {
+    const source = workspace.editorSource;
+    if (!source) return [] as string[];
+
+    if (source.kind === 'workspace') {
+      const current = workspace.nodes.find((node) => node.id === source.fileId);
+      if (!current) return [];
+      const sameFolder = workspace.nodes
+        .filter((node) => node.type === 'file' && node.parentId === current.parentId && node.id !== current.id)
+        .map((node) => node.name);
+
+      // Also suggest files one folder deeper as relative paths (e.g. js/app.js)
+      const childFolders = workspace.nodes.filter(
+        (node) => node.type === 'folder' && node.parentId === current.parentId,
+      );
+      const nested: string[] = [];
+      for (const folder of childFolders) {
+        for (const node of workspace.nodes) {
+          if (node.type === 'file' && node.parentId === folder.id) {
+            nested.push(`${folder.name}/${node.name}`);
+          }
+        }
+      }
+      return [...sameFolder, ...nested];
+    }
+
+    const dir = dirname(source.path);
+    return localFolder.files
+      .filter((file) => file.path !== source.path && dirname(file.path) === dir)
+      .map((file) => file.name);
+  })();
+
+  const runHint = isWebPreviewFile(activeFileName)
+    ? 'Ctrl+Enter / Cmd+Enter — preview in Web View'
+    : canRun
+      ? 'Ctrl+Enter / Cmd+Enter'
+      : 'Run supports .js, .html, and .css files';
+  const runTitle = isWebPreviewFile(activeFileName)
+    ? 'Preview in Web View'
+    : canRun
+      ? 'Run JavaScript'
+      : 'Only .js, .html, and .css files can be run';
 
   return (
     <div className="app">
       <header className="app-header">
         <div className="app-header__brand">
-          <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Code v/s Me" className="app-header__logo" />
-          <div className="app-header__text">
-            <h1>Code v/s Me</h1>
-            <p>Infinite Challenge. Infinite Growth.</p>
-          </div>
+          <a href="https://www.codevsme.com/" className="app-header__brand-link">
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="app-header__logo" />
+            <div className="app-header__text">
+              <h1>Code v/s Me</h1>
+              <p>Infinite Challenge. Infinite Growth.</p>
+            </div>
+          </a>
         </div>
-        {auth.user ? (
-          <UserMenu user={auth.user} onLogout={auth.logout} />
-        ) : (
-          <button type="button" className="btn btn--signin" onClick={auth.openModal}>
-            Sign in
-          </button>
-        )}
+        <div className="app-header__actions">
+          {auth.user ? (
+            <UserMenu user={auth.user} onLogout={auth.logout} />
+          ) : (
+            <button
+              type="button"
+              className="btn btn--signin"
+              onClick={auth.openModal}
+              aria-haspopup="dialog"
+            >
+              Sign in
+            </button>
+          )}
+        </div>
       </header>
 
+      <main id="main-content" className="app-main" tabIndex={-1}>
       <SplitPane
         left={
           <div className="editor-layout">
@@ -253,11 +437,9 @@ function AppContent({ auth }: { auth: AuthApi }) {
               onSelectFolder={handleSelectFolder}
               onSelectLocalFolder={localFolder.setSelectedLocalFolderPath}
               onToggleFolder={workspace.toggleFolder}
-              onSetExpandedFolders={workspace.setExpandedFolders}
               onOpenWorkspaceFile={handleOpenWorkspaceFile}
               onOpenLocalFile={handleOpenLocalFile}
               onToggleLocalPath={localFolder.toggleLocalPath}
-              onSetExpandedLocalPaths={localFolder.setExpandedPaths}
               onCreateFile={handleCreateWorkspaceFile}
               onCreateFolder={handleCreateWorkspaceFolder}
               onCreateLocalFile={handleCreateLocalFile}
@@ -277,6 +459,7 @@ function AppContent({ auth }: { auth: AuthApi }) {
               onRefreshLocal={() => {
                 if (localFolder.dirHandle) void localFolder.refreshFiles(localFolder.dirHandle);
               }}
+              onSetExplorerSection={localFolder.setExplorerSection}
               collapsed={!explorerOpen}
               onToggleCollapse={toggleExplorer}
             />
@@ -289,19 +472,21 @@ function AppContent({ auth }: { auth: AuthApi }) {
                 onSelectTab={(tabId) => void workspace.activateTab(tabId)}
                 onCloseTab={(tabId) => void workspace.closeTab(tabId)}
               />
-              <div className={`panel-toolbar ${snippetsOpen ? 'panel-toolbar--stacked' : ''}`}>
+              <div className={`panel-toolbar ${snippetsOpen && canUseSnippets ? 'panel-toolbar--stacked' : ''}`}>
                 <div className="panel-toolbar__row">
                   <button
                     type="button"
                     className="btn btn--toggle"
                     onClick={toggleSnippets}
-                    aria-expanded={snippetsOpen}
+                    aria-expanded={snippetsOpen && canUseSnippets}
+                    disabled={!canUseSnippets}
+                    title={canUseSnippets ? 'Insert JS examples and DSA templates' : 'Snippets are only available for .js files'}
                   >
-                    <span className={`btn__chevron ${snippetsOpen ? 'btn__chevron--open' : ''}`}>›</span>
+                    <span className={`btn__chevron ${snippetsOpen && canUseSnippets ? 'btn__chevron--open' : ''}`}>›</span>
                     Snippets
                   </button>
                   <div className="panel-toolbar__right">
-                    <span className="hint">{canRun ? 'Ctrl+Enter / Cmd+Enter' : 'Run is only available for .js files'}</span>
+                    <span className="hint">{runHint}</span>
                     <label className="toggle">
                       <input
                         type="checkbox"
@@ -326,15 +511,15 @@ function AppContent({ auth }: { auth: AuthApi }) {
                     <button
                       type="button"
                       className="btn btn--primary"
-                      onClick={() => handleRun()}
+                      onClick={() => void handleRun()}
                       disabled={!canRun}
-                      title={canRun ? 'Run JavaScript' : 'Only .js files can be run'}
+                      title={runTitle}
                     >
                       Run
                     </button>
                   </div>
                 </div>
-                {snippetsOpen ? (
+                {snippetsOpen && canUseSnippets ? (
                   <div className="snippet-bar">
                     <label className="select-label">
                       Examples
@@ -389,7 +574,11 @@ function AppContent({ auth }: { auth: AuthApi }) {
                 value={workspace.code}
                 onChange={workspace.updateCode}
                 lineWrap={lineWrap}
-                onRun={handleRun}
+                language={editorLanguage}
+                siblingFiles={siblingFiles}
+                onRun={(code) => {
+                  void handleRun(code);
+                }}
                 canRun={canRun}
               />
             </div>
@@ -398,10 +587,15 @@ function AppContent({ auth }: { auth: AuthApi }) {
         right={
           <OutputTabs
             outputLines={lines}
+            runOutcome={runOutcome}
             terminalLines={repl.lines}
             terminalBusy={repl.busy}
+            webViewHtml={webViewHtml}
+            activeTab={outputTab}
+            onActiveTabChange={setOutputTab}
             onClearConsole={clear}
             onClearTerminal={repl.clear}
+            onClearWebView={clearWebView}
             onResetTerminal={repl.resetSession}
             onTerminalExec={repl.exec}
             onTerminalPreviousInput={repl.getPreviousInput}
@@ -409,6 +603,7 @@ function AppContent({ auth }: { auth: AuthApi }) {
           />
         }
       />
+      </main>
       <LearnChatPanel open={chatOpen} context={chatContext} onClose={() => setChatOpen(false)} />
     </div>
   );
@@ -420,7 +615,7 @@ function AuthenticatedApp() {
 
   if (!auth.ready) {
     return (
-      <div className="app app--loading">
+      <div className="app app--loading" role="status" aria-live="polite">
         <p>Loading…</p>
       </div>
     );

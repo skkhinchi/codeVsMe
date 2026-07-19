@@ -4,7 +4,7 @@ import type { LocalFileEntry, WorkspaceNode } from '../../types/workspace';
 import { buildLocalFileTree, type LocalTreeNode } from '../../utils/localFileTree';
 import { useUi } from '../ui/UiProvider';
 import { TreeContextMenu, type TreeContextMenuItem } from './TreeContextMenu';
-import { CollapseAllIcon, ExpandAllIcon, NewFileIcon, NewFolderIcon, RefreshIcon } from './TreeIcons';
+import { DeleteIcon, DiskGlyph, FileGlyph, FolderGlyph, NewFileIcon, NewFolderIcon, RefreshIcon, WorkspaceGlyph } from './TreeIcons';
 
 type FileExplorerProps = {
   nodes: WorkspaceNode[];
@@ -23,11 +23,9 @@ type FileExplorerProps = {
   onSelectFolder: (folderId: string | null) => void;
   onSelectLocalFolder: (path: string | null) => void;
   onToggleFolder: (folderId: string) => void;
-  onSetExpandedFolders: (ids: Iterable<string>) => void;
   onOpenWorkspaceFile: (fileId: string) => void;
   onOpenLocalFile: (entry: LocalFileEntry) => void;
   onToggleLocalPath: (path: string) => void;
-  onSetExpandedLocalPaths: (paths: Iterable<string>) => void;
   onCreateFile: (parentId: string | null) => void;
   onCreateFolder: (parentId: string | null) => void;
   onCreateLocalFile: (parentPath: string | null) => void;
@@ -41,6 +39,7 @@ type FileExplorerProps = {
   onDeleteLocalFolder: (folderPath: string) => void;
   onRefreshWorkspace: () => void;
   onRefreshLocal: () => void;
+  onSetExplorerSection: (section: ExplorerSection) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 };
@@ -55,44 +54,24 @@ function Chevron({ expanded }: { expanded: boolean }) {
   return <span className={`tree-row__chevron ${expanded ? 'tree-row__chevron--open' : ''}`}>›</span>;
 }
 
-function collectWorkspaceFolderIds(nodes: WorkspaceNode[], rootId: string): string[] {
-  const ids: string[] = [];
-  const queue = [rootId];
-  while (queue.length > 0) {
-    const id = queue.pop()!;
-    ids.push(id);
-    for (const node of nodes) {
-      if (node.type === 'folder' && node.parentId === id) queue.push(node.id);
-    }
-  }
-  return ids;
-}
-
-function collectLocalFolderPaths(folderPaths: string[], rootPath: string | null): string[] {
-  if (rootPath === null) return [...folderPaths];
-  return folderPaths.filter((path) => path === rootPath || path.startsWith(`${rootPath}/`));
-}
-
 function FolderActions({
-  expandedDeep,
   onNewFile,
   onNewFolder,
   onRefresh,
-  onToggleExpandCollapse,
+  onDelete,
 }: {
-  expandedDeep: boolean;
   onNewFile: () => void;
   onNewFolder: () => void;
   onRefresh: () => void;
-  onToggleExpandCollapse: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <div className="tree-row__actions">
       <button
         type="button"
         className="tree-row__icon-btn"
-        data-tooltip="Create new file"
-        aria-label="Create new file"
+        data-tooltip="New file"
+        aria-label="New file"
         onClick={(event) => {
           event.stopPropagation();
           onNewFile();
@@ -103,8 +82,8 @@ function FolderActions({
       <button
         type="button"
         className="tree-row__icon-btn"
-        data-tooltip="Create new folder"
-        aria-label="Create new folder"
+        data-tooltip="New folder"
+        aria-label="New folder"
         onClick={(event) => {
           event.stopPropagation();
           onNewFolder();
@@ -124,17 +103,38 @@ function FolderActions({
       >
         <RefreshIcon />
       </button>
+      {onDelete ? (
+        <button
+          type="button"
+          className="tree-row__icon-btn tree-row__icon-btn--danger"
+          data-tooltip="Delete"
+          aria-label="Delete"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+        >
+          <DeleteIcon />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function FileActions({ onDelete }: { onDelete: () => void }) {
+  return (
+    <div className="tree-row__actions">
       <button
         type="button"
-        className="tree-row__icon-btn"
-        data-tooltip={expandedDeep ? 'Collapse all folders' : 'Expand all folders'}
-        aria-label={expandedDeep ? 'Collapse all folders' : 'Expand all folders'}
+        className="tree-row__icon-btn tree-row__icon-btn--danger"
+        data-tooltip="Delete"
+        aria-label="Delete"
         onClick={(event) => {
           event.stopPropagation();
-          onToggleExpandCollapse();
+          onDelete();
         }}
       >
-        {expandedDeep ? <CollapseAllIcon /> : <ExpandAllIcon />}
+        <DeleteIcon />
       </button>
     </div>
   );
@@ -154,7 +154,7 @@ function WorkspaceTreeNodes({
   onCreateFile,
   onCreateFolder,
   onRefresh,
-  onToggleExpandCollapse,
+  onDelete,
 }: {
   nodes: WorkspaceNode[];
   parentId: string | null;
@@ -169,7 +169,7 @@ function WorkspaceTreeNodes({
   onCreateFile: (parentId: string | null) => void;
   onCreateFolder: (parentId: string | null) => void;
   onRefresh: (folderId: string) => void;
-  onToggleExpandCollapse: (folderId: string) => void;
+  onDelete: (nodeId: string) => void;
 }) {
   const children = nodes
     .filter((node) => node.parentId === parentId)
@@ -183,8 +183,6 @@ function WorkspaceTreeNodes({
       {children.map((node) => {
         if (node.type === 'folder') {
           const expanded = expandedFolderIds.has(node.id);
-          const folderIds = collectWorkspaceFolderIds(nodes, node.id);
-          const expandedDeep = folderIds.some((id) => expandedFolderIds.has(id));
           return (
             <div key={node.id} className="tree-branch">
               <div
@@ -205,11 +203,12 @@ function WorkspaceTreeNodes({
                   className="tree-row__label-btn"
                   onClick={() => onSelectFolder(node.id)}
                 >
-                  <span className="tree-row__icon">📁</span>
+                  <span className="tree-row__icon tree-row__icon--folder">
+                    <FolderGlyph />
+                  </span>
                   <span className="tree-row__label">{node.name}</span>
                 </button>
                 <FolderActions
-                  expandedDeep={expandedDeep}
                   onNewFile={() => {
                     onSelectFolder(node.id);
                     onCreateFile(node.id);
@@ -219,7 +218,7 @@ function WorkspaceTreeNodes({
                     onCreateFolder(node.id);
                   }}
                   onRefresh={() => onRefresh(node.id)}
-                  onToggleExpandCollapse={() => onToggleExpandCollapse(node.id)}
+                  onDelete={() => onDelete(node.id)}
                 />
               </div>
               {expanded ? (
@@ -237,7 +236,7 @@ function WorkspaceTreeNodes({
                   onCreateFile={onCreateFile}
                   onCreateFolder={onCreateFolder}
                   onRefresh={onRefresh}
-                  onToggleExpandCollapse={onToggleExpandCollapse}
+                  onDelete={onDelete}
                 />
               ) : null}
             </div>
@@ -256,9 +255,12 @@ function WorkspaceTreeNodes({
               className="tree-row__label-btn"
               onClick={() => onOpenWorkspaceFile(node.id)}
             >
-              <span className="tree-row__icon">📄</span>
+              <span className="tree-row__icon tree-row__icon--file">
+                <FileGlyph />
+              </span>
               <span className="tree-row__label">{node.name}</span>
             </button>
+            <FileActions onDelete={() => onDelete(node.id)} />
           </div>
         );
       })}
@@ -272,7 +274,6 @@ function LocalTreeNodes({
   activeLocalPath,
   selectedLocalFolderPath,
   expandedLocalPaths,
-  localFolderPaths,
   onToggleLocalPath,
   onSelectLocalFolder,
   onOpenLocalFile,
@@ -281,14 +282,14 @@ function LocalTreeNodes({
   onCreateLocalFile,
   onCreateLocalFolder,
   onRefresh,
-  onToggleExpandCollapse,
+  onDeleteFolder,
+  onDeleteFile,
 }: {
   tree: LocalTreeNode[];
   depth: number;
   activeLocalPath: string | null;
   selectedLocalFolderPath: string | null;
   expandedLocalPaths: Set<string>;
-  localFolderPaths: string[];
   onToggleLocalPath: (path: string) => void;
   onSelectLocalFolder: (path: string | null) => void;
   onOpenLocalFile: (entry: LocalFileEntry) => void;
@@ -297,15 +298,14 @@ function LocalTreeNodes({
   onCreateLocalFile: (parentPath: string | null) => void;
   onCreateLocalFolder: (parentPath: string | null) => void;
   onRefresh: () => void;
-  onToggleExpandCollapse: (folderPath: string) => void;
+  onDeleteFolder: (folderPath: string) => void;
+  onDeleteFile: (entry: LocalFileEntry) => void;
 }) {
   return (
     <>
       {tree.map((node) => {
         if (node.type === 'folder') {
           const expanded = expandedLocalPaths.has(node.path);
-          const folderPaths = collectLocalFolderPaths(localFolderPaths, node.path);
-          const expandedDeep = folderPaths.some((path) => expandedLocalPaths.has(path));
           return (
             <div key={node.path} className="tree-branch">
               <div
@@ -326,11 +326,12 @@ function LocalTreeNodes({
                   className="tree-row__label-btn"
                   onClick={() => onSelectLocalFolder(node.path)}
                 >
-                  <span className="tree-row__icon">📁</span>
+                  <span className="tree-row__icon tree-row__icon--folder">
+                    <FolderGlyph />
+                  </span>
                   <span className="tree-row__label">{node.name}</span>
                 </button>
                 <FolderActions
-                  expandedDeep={expandedDeep}
                   onNewFile={() => {
                     onSelectLocalFolder(node.path);
                     onCreateLocalFile(node.path);
@@ -340,7 +341,7 @@ function LocalTreeNodes({
                     onCreateLocalFolder(node.path);
                   }}
                   onRefresh={onRefresh}
-                  onToggleExpandCollapse={() => onToggleExpandCollapse(node.path)}
+                  onDelete={() => onDeleteFolder(node.path)}
                 />
               </div>
               {expanded ? (
@@ -350,7 +351,6 @@ function LocalTreeNodes({
                   activeLocalPath={activeLocalPath}
                   selectedLocalFolderPath={selectedLocalFolderPath}
                   expandedLocalPaths={expandedLocalPaths}
-                  localFolderPaths={localFolderPaths}
                   onToggleLocalPath={onToggleLocalPath}
                   onSelectLocalFolder={onSelectLocalFolder}
                   onOpenLocalFile={onOpenLocalFile}
@@ -359,7 +359,8 @@ function LocalTreeNodes({
                   onCreateLocalFile={onCreateLocalFile}
                   onCreateLocalFolder={onCreateLocalFolder}
                   onRefresh={onRefresh}
-                  onToggleExpandCollapse={onToggleExpandCollapse}
+                  onDeleteFolder={onDeleteFolder}
+                  onDeleteFile={onDeleteFile}
                 />
               ) : null}
             </div>
@@ -378,9 +379,12 @@ function LocalTreeNodes({
               className="tree-row__label-btn"
               onClick={() => onOpenLocalFile(node.entry)}
             >
-              <span className="tree-row__icon">📄</span>
+              <span className="tree-row__icon tree-row__icon--file">
+                <FileGlyph />
+              </span>
               <span className="tree-row__label">{node.name}</span>
             </button>
+            <FileActions onDelete={() => onDeleteFile(node.entry)} />
           </div>
         );
       })}
@@ -405,11 +409,9 @@ export function FileExplorer({
   onSelectFolder,
   onSelectLocalFolder,
   onToggleFolder,
-  onSetExpandedFolders,
   onOpenWorkspaceFile,
   onOpenLocalFile,
   onToggleLocalPath,
-  onSetExpandedLocalPaths,
   onCreateFile,
   onCreateFolder,
   onCreateLocalFile,
@@ -423,10 +425,11 @@ export function FileExplorer({
   onDeleteLocalFolder,
   onRefreshWorkspace,
   onRefreshLocal,
+  onSetExplorerSection,
   collapsed,
   onToggleCollapse,
 }: FileExplorerProps) {
-  const { confirm, prompt } = useUi();
+  const { confirm, prompt, toast } = useUi();
   const importInputRef = useRef<HTMLInputElement>(null);
   const importParentRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -456,15 +459,23 @@ export function FileExplorer({
     async (nodeId: string) => {
       const target = nodes.find((node) => node.id === nodeId);
       const label = target?.name ?? 'item';
+      const kind = target?.type === 'folder' ? 'Folder' : 'File';
       const confirmed = await confirm({
         title: 'Delete item',
         message: `Delete "${label}"? This cannot be undone.`,
         confirmLabel: 'Delete',
         danger: true,
       });
-      if (confirmed) onDeleteWorkspaceNode(nodeId);
+      if (!confirmed) return;
+      try {
+        onDeleteWorkspaceNode(nodeId);
+        toast.success({ title: `${kind} deleted`, message: `"${label}" was removed from your workspace.` });
+      } catch (error) {
+        console.error(error);
+        toast.error({ title: `Could not delete ${kind.toLowerCase()}`, message: 'Please try again.' });
+      }
     },
-    [confirm, nodes, onDeleteWorkspaceNode],
+    [confirm, nodes, onDeleteWorkspaceNode, toast],
   );
 
   const handleRequestDeleteLocal = useCallback(
@@ -475,9 +486,16 @@ export function FileExplorer({
         confirmLabel: 'Delete',
         danger: true,
       });
-      if (confirmed) onDeleteLocalFile(entry);
+      if (!confirmed) return;
+      try {
+        await onDeleteLocalFile(entry);
+        toast.success({ title: 'File deleted', message: `"${entry.path}" was removed from disk.` });
+      } catch (error) {
+        console.error(error);
+        toast.error({ title: 'Could not delete file', message: 'Check folder permission and try again.' });
+      }
     },
-    [confirm, onDeleteLocalFile],
+    [confirm, onDeleteLocalFile, toast],
   );
 
   const handleRequestDeleteLocalFolder = useCallback(
@@ -488,9 +506,16 @@ export function FileExplorer({
         confirmLabel: 'Delete',
         danger: true,
       });
-      if (confirmed) onDeleteLocalFolder(folderPath);
+      if (!confirmed) return;
+      try {
+        await onDeleteLocalFolder(folderPath);
+        toast.success({ title: 'Folder deleted', message: `"${folderPath}" was removed from disk.` });
+      } catch (error) {
+        console.error(error);
+        toast.error({ title: 'Could not delete folder', message: 'Check folder permission and try again.' });
+      }
     },
-    [confirm, onDeleteLocalFolder],
+    [confirm, onDeleteLocalFolder, toast],
   );
 
   const startImport = useCallback((parentId: string | null) => {
@@ -649,53 +674,52 @@ export function FileExplorer({
     [expandedFolderIds, onRefreshWorkspace, onSelectFolder, onToggleFolder],
   );
 
-  const toggleWorkspaceExpandCollapse = useCallback(
-    (folderId: string) => {
-      const folderIds = collectWorkspaceFolderIds(nodes, folderId);
-      const anyExpanded = folderIds.some((id) => expandedFolderIds.has(id));
-      if (anyExpanded) {
-        const next = new Set(expandedFolderIds);
-        for (const id of folderIds) next.delete(id);
-        onSetExpandedFolders(next);
-        return;
-      }
-      const next = new Set(expandedFolderIds);
-      for (const id of folderIds) next.add(id);
-      onSetExpandedFolders(next);
-    },
-    [expandedFolderIds, nodes, onSetExpandedFolders],
-  );
-
-  const toggleLocalExpandCollapse = useCallback(
-    (folderPath: string | null) => {
-      const folderPaths = collectLocalFolderPaths(localFolderPaths, folderPath);
-      const anyExpanded = folderPaths.some((path) => expandedLocalPaths.has(path));
-      if (anyExpanded) {
-        const next = new Set(expandedLocalPaths);
-        for (const path of folderPaths) next.delete(path);
-        onSetExpandedLocalPaths(next);
-        return;
-      }
-      const next = new Set(expandedLocalPaths);
-      for (const path of folderPaths) next.add(path);
-      onSetExpandedLocalPaths(next);
-    },
-    [expandedLocalPaths, localFolderPaths, onSetExpandedLocalPaths],
-  );
-
   return (
-    <aside className={`file-explorer ${collapsed ? 'file-explorer--collapsed' : ''}`}>
-      <div className="file-explorer__header">
-        {!collapsed ? <h2>Explorer</h2> : null}
-        <button
-          type="button"
-          className="file-explorer__toggle"
-          onClick={onToggleCollapse}
-          title={collapsed ? 'Expand Explorer' : 'Collapse Explorer'}
-          aria-label={collapsed ? 'Expand Explorer' : 'Collapse Explorer'}
-        >
-          {collapsed ? '›' : '‹'}
-        </button>
+    <aside className={`file-explorer ${collapsed ? 'file-explorer--collapsed' : ''}`} aria-label="File explorer">
+      <div className="file-explorer__chrome">
+        <div className="file-explorer__header">
+          {!collapsed ? (
+            <div className="file-explorer__brand">
+              <span className="file-explorer__brand-mark" aria-hidden />
+              <h2>Files</h2>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="file-explorer__toggle"
+            onClick={onToggleCollapse}
+            title={collapsed ? 'Expand Files' : 'Collapse Files'}
+            aria-label={collapsed ? 'Expand Files' : 'Collapse Files'}
+          >
+            {collapsed ? '›' : '‹'}
+          </button>
+        </div>
+
+        {!collapsed ? (
+          <div className="file-explorer__source-switch" role="tablist" aria-label="File source">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={explorerSection === 'workspace'}
+              className={`file-explorer__source-btn ${explorerSection === 'workspace' ? 'file-explorer__source-btn--active' : ''}`}
+              onClick={() => onSetExplorerSection('workspace')}
+            >
+              <WorkspaceGlyph />
+              <span>Workspace</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={explorerSection === 'local'}
+              className={`file-explorer__source-btn ${explorerSection === 'local' ? 'file-explorer__source-btn--active' : ''}`}
+              onClick={() => onSetExplorerSection('local')}
+            >
+              <DiskGlyph />
+              <span>On disk</span>
+              {localFolderName ? <span className="file-explorer__source-dot" aria-hidden /> : null}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {!collapsed ? (
@@ -703,7 +727,7 @@ export function FileExplorer({
           <input
             ref={importInputRef}
             type="file"
-            accept=".js,.mjs,.cjs,.ts,.tsx,.jsx,.txt"
+            accept=".js,.mjs,.cjs,.ts,.tsx,.jsx,.txt,.html,.htm,.css"
             hidden
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -713,70 +737,126 @@ export function FileExplorer({
             }}
           />
 
-          <div className="file-explorer__scroll">
-            <div className="file-explorer__section">
-              <div className="file-explorer__section-title">My Workspace</div>
-              <div className="file-explorer__tree">
-                <WorkspaceTreeNodes
-                  nodes={nodes}
-                  parentId={null}
-                  depth={0}
-                  activeFileId={activeFileId}
-                  selectedFolderId={selectedFolderId}
-                  expandedFolderIds={expandedFolderIds}
-                  onSelectFolder={onSelectFolder}
-                  onToggleFolder={onToggleFolder}
-                  onOpenWorkspaceFile={onOpenWorkspaceFile}
-                  onContextMenu={openWorkspaceContextMenu}
-                  onCreateFile={onCreateFile}
-                  onCreateFolder={onCreateFolder}
-                  onRefresh={refreshWorkspaceFolder}
-                  onToggleExpandCollapse={toggleWorkspaceExpandCollapse}
-                />
-              </div>
-            </div>
-
-            <div className="file-explorer__section">
-              <div className="file-explorer__section-header">
-                <div className="file-explorer__section-title">Local Folder</div>
-                <button
-                  type="button"
-                  className="btn btn--small"
-                  onClick={onOpenLocalFolder}
-                  disabled={!localSupported}
-                >
-                  Open Folder
-                </button>
-              </div>
-              {!localSupported ? (
-                <p className="file-explorer__hint">Use Chrome or Edge to edit local folders.</p>
-              ) : null}
-              {localFolderName ? (
-                <>
-                  {localNeedsPermission ? (
-                    <div className="file-explorer__permission-banner">
-                      <p className="file-explorer__hint">
-                        Reconnect to <strong>{localFolderName}</strong> to access local files.
-                      </p>
-                      <button type="button" className="btn btn--small btn--primary" onClick={onReconnectLocalFolder}>
-                        Reconnect folder
-                      </button>
-                    </div>
-                  ) : null}
-                  <div
-                    className={`file-explorer__root-folder tree-row ${explorerSection === 'local' && selectedLocalFolderPath === null ? 'file-explorer__root-folder--selected tree-row--selected' : ''}`}
-                  >
+          <div className="file-explorer__scroll" key={explorerSection}>
+            {explorerSection === 'workspace' ? (
+              <div className="file-explorer__pane file-explorer__pane--enter">
+                <div className="file-explorer__pane-head file-explorer__pane-head--row">
+                  <div>
+                    <p className="file-explorer__pane-kicker">In browser</p>
+                    <p className="file-explorer__pane-copy">Saved here — no upload required.</p>
+                  </div>
+                  <div className="file-explorer__quick-actions">
                     <button
                       type="button"
-                      className="tree-row__label-btn"
-                      onClick={() => onSelectLocalFolder(null)}
+                      className="tree-row__icon-btn"
+                      data-tooltip="New file at root"
+                      aria-label="New file at workspace root"
+                      onClick={() => {
+                        onSelectFolder(null);
+                        onCreateFile(null);
+                      }}
                     >
-                      <span className="tree-row__icon">📂</span>
-                      <span className="file-explorer__folder-name">{localFolderName}</span>
+                      <NewFileIcon />
                     </button>
-                    {!localNeedsPermission ? (
+                    <button
+                      type="button"
+                      className="tree-row__icon-btn"
+                      data-tooltip="New folder at root"
+                      aria-label="New folder at workspace root"
+                      onClick={() => {
+                        onSelectFolder(null);
+                        onCreateFolder(null);
+                      }}
+                    >
+                      <NewFolderIcon />
+                    </button>
+                  </div>
+                </div>
+                {nodes.length === 0 ? (
+                  <div className="file-explorer__empty file-explorer__empty--cta">
+                    <WorkspaceGlyph />
+                    <p>Start your practice space</p>
+                    <span>Create a folder or drop in a file to begin.</span>
+                    <button type="button" className="btn btn--primary" onClick={() => onCreateFolder(null)}>
+                      New folder
+                    </button>
+                  </div>
+                ) : (
+                  <div className="file-explorer__tree">
+                    <WorkspaceTreeNodes
+                      nodes={nodes}
+                      parentId={null}
+                      depth={0}
+                      activeFileId={activeFileId}
+                      selectedFolderId={selectedFolderId}
+                      expandedFolderIds={expandedFolderIds}
+                      onSelectFolder={onSelectFolder}
+                      onToggleFolder={onToggleFolder}
+                      onOpenWorkspaceFile={onOpenWorkspaceFile}
+                      onContextMenu={openWorkspaceContextMenu}
+                      onCreateFile={onCreateFile}
+                      onCreateFolder={onCreateFolder}
+                      onRefresh={refreshWorkspaceFolder}
+                      onDelete={(nodeId) => {
+                        void handleDeleteWorkspaceNode(nodeId);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="file-explorer__pane file-explorer__pane--enter">
+                <div className="file-explorer__pane-head file-explorer__pane-head--row">
+                  <div>
+                    <p className="file-explorer__pane-kicker">On your machine</p>
+                    <p className="file-explorer__pane-copy">
+                      {localFolderName ? `Connected to “${localFolderName}”` : 'Pick a folder to edit on disk.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--small file-explorer__open-btn"
+                    onClick={onOpenLocalFolder}
+                    disabled={!localSupported}
+                  >
+                    {localFolderName ? 'Change' : 'Open'}
+                  </button>
+                </div>
+
+                {!localSupported ? (
+                  <div className="file-explorer__empty">
+                    <p>Chrome or Edge required for disk access.</p>
+                  </div>
+                ) : null}
+
+                {localSupported && localFolderName && localNeedsPermission ? (
+                  <div className="file-explorer__reconnect">
+                    <div>
+                      <strong>{localFolderName}</strong>
+                      <span>Permission expired — reconnect to continue.</span>
+                    </div>
+                    <button type="button" className="btn btn--small btn--primary" onClick={onReconnectLocalFolder}>
+                      Reconnect
+                    </button>
+                  </div>
+                ) : null}
+
+                {localSupported && localFolderName && !localNeedsPermission ? (
+                  <>
+                    <div
+                      className={`file-explorer__root-folder tree-row ${selectedLocalFolderPath === null ? 'file-explorer__root-folder--selected tree-row--selected' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        className="tree-row__label-btn"
+                        onClick={() => onSelectLocalFolder(null)}
+                      >
+                        <span className="tree-row__icon tree-row__icon--folder">
+                          <FolderGlyph />
+                        </span>
+                        <span className="file-explorer__folder-name">{localFolderName}</span>
+                      </button>
                       <FolderActions
-                        expandedDeep={localFolderPaths.some((path) => expandedLocalPaths.has(path))}
                         onNewFile={() => {
                           onSelectLocalFolder(null);
                           onCreateLocalFile(null);
@@ -786,38 +866,53 @@ export function FileExplorer({
                           onCreateLocalFolder(null);
                         }}
                         onRefresh={onRefreshLocal}
-                        onToggleExpandCollapse={() => toggleLocalExpandCollapse(null)}
                       />
-                    ) : null}
+                    </div>
+                    <div className="file-explorer__tree">
+                      {localTree.length === 0 ? (
+                        <div className="file-explorer__empty">
+                          <p>Empty folder</p>
+                          <span>Hover the folder name to add a file.</span>
+                        </div>
+                      ) : (
+                        <LocalTreeNodes
+                          tree={localTree}
+                          depth={0}
+                          activeLocalPath={activeLocalPath}
+                          selectedLocalFolderPath={selectedLocalFolderPath}
+                          expandedLocalPaths={expandedLocalPaths}
+                          onToggleLocalPath={onToggleLocalPath}
+                          onSelectLocalFolder={onSelectLocalFolder}
+                          onOpenLocalFile={onOpenLocalFile}
+                          onContextMenuFolder={openLocalFolderContextMenu}
+                          onContextMenuFile={openLocalFileContextMenu}
+                          onCreateLocalFile={onCreateLocalFile}
+                          onCreateLocalFolder={onCreateLocalFolder}
+                          onRefresh={onRefreshLocal}
+                          onDeleteFolder={(folderPath) => {
+                            void handleRequestDeleteLocalFolder(folderPath);
+                          }}
+                          onDeleteFile={(entry) => {
+                            void handleRequestDeleteLocal(entry);
+                          }}
+                        />
+                      )}
+                    </div>
+                  </>
+                ) : null}
+
+                {localSupported && !localFolderName ? (
+                  <div className="file-explorer__empty file-explorer__empty--cta">
+                    <DiskGlyph />
+                    <p>Bring a project from your machine</p>
+                    <span>Edits write back to disk with Chrome’s folder picker.</span>
+                    <button type="button" className="btn btn--primary" onClick={onOpenLocalFolder}>
+                      Open folder
+                    </button>
                   </div>
-                  <div className="file-explorer__tree">
-                    {localTree.length === 0 ? (
-                      <p className="file-explorer__hint">Empty folder — hover the folder name and use New File / New Folder.</p>
-                    ) : (
-                      <LocalTreeNodes
-                        tree={localTree}
-                        depth={0}
-                        activeLocalPath={activeLocalPath}
-                        selectedLocalFolderPath={selectedLocalFolderPath}
-                        expandedLocalPaths={expandedLocalPaths}
-                        onToggleLocalPath={onToggleLocalPath}
-                        onSelectLocalFolder={onSelectLocalFolder}
-                        onOpenLocalFile={onOpenLocalFile}
-                        onContextMenuFolder={openLocalFolderContextMenu}
-                        onContextMenuFile={openLocalFileContextMenu}
-                        onCreateLocalFile={onCreateLocalFile}
-                        onCreateLocalFolder={onCreateLocalFolder}
-                        onRefresh={onRefreshLocal}
-                        localFolderPaths={localFolderPaths}
-                        onToggleExpandCollapse={toggleLocalExpandCollapse}
-                      />
-                    )}
-                  </div>
-                </>
-              ) : (
-                <p className="file-explorer__hint">Open a folder from your computer to edit files on disk.</p>
-              )}
-            </div>
+                ) : null}
+              </div>
+            )}
           </div>
         </div>
       ) : null}

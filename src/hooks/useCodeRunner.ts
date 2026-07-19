@@ -9,13 +9,17 @@ const EXECUTION_TIMEOUT_MS = 2000;
 const ASYNC_DRAIN_MS = 2000;
 const WATCHDOG_INTERVAL_MS = 100;
 
+export type RunOutcome = 'idle' | 'success' | 'error';
+
 export function useCodeRunner() {
   const [lines, setLines] = useState<OutputLine[]>([]);
+  const [runOutcome, setRunOutcome] = useState<RunOutcome>('idle');
   const workerRef = useRef<Worker | null>(null);
   const executionTimeoutRef = useRef<number | null>(null);
   const watchdogIntervalRef = useRef<number | null>(null);
   const drainTimeoutRef = useRef<number | null>(null);
   const executionFinishedRef = useRef(false);
+  const runHadErrorRef = useRef(false);
   const runIdRef = useRef(0);
   const runStartedAtRef = useRef(0);
 
@@ -61,8 +65,10 @@ export function useCodeRunner() {
       clearWatchdog();
       clearDrainTimeout();
       executionFinishedRef.current = false;
+      runHadErrorRef.current = true;
       detachWorker();
       appendLine({ kind: 'runtime-error', text: message });
+      setRunOutcome('error');
     },
     [appendLine, clearDrainTimeout, clearExecutionTimeout, clearWatchdog, detachWorker],
   );
@@ -102,6 +108,8 @@ export function useCodeRunner() {
     (code: string) => {
       cleanupWorker();
       setLines([]);
+      setRunOutcome('idle');
+      runHadErrorRef.current = false;
 
       const runId = runIdRef.current + 1;
       runIdRef.current = runId;
@@ -125,6 +133,10 @@ export function useCodeRunner() {
 
         if (message.type === 'console') {
           appendLine({ kind: message.level, text: message.args.join(' ') });
+          if (message.level === 'error') {
+            runHadErrorRef.current = true;
+            setRunOutcome('error');
+          }
           if (executionFinishedRef.current) {
             scheduleDrain();
           }
@@ -138,11 +150,13 @@ export function useCodeRunner() {
 
         if (message.type === 'error') {
           cleanupWorker();
+          runHadErrorRef.current = true;
           appendLine({
             kind: 'runtime-error',
             text: message.message,
             line: message.line,
           });
+          setRunOutcome('error');
           return;
         }
 
@@ -150,6 +164,7 @@ export function useCodeRunner() {
           clearExecutionTimeout();
           clearWatchdog();
           executionFinishedRef.current = true;
+          if (!runHadErrorRef.current) setRunOutcome('success');
           scheduleDrain();
         }
       };
@@ -157,7 +172,9 @@ export function useCodeRunner() {
       worker.onerror = () => {
         if (runId !== runIdRef.current) return;
         cleanupWorker();
+        runHadErrorRef.current = true;
         appendLine({ kind: 'runtime-error', text: 'Worker failed to execute code' });
+        setRunOutcome('error');
       };
 
       worker.postMessage({ type: 'run', code });
@@ -168,9 +185,10 @@ export function useCodeRunner() {
   const clear = useCallback(() => {
     cleanupWorker();
     setLines([]);
+    setRunOutcome('idle');
   }, [cleanupWorker]);
 
   useEffect(() => cleanupWorker, [cleanupWorker]);
 
-  return { lines, run, clear };
+  return { lines, run, clear, runOutcome };
 }

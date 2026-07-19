@@ -15,8 +15,10 @@ type ToastVariant = 'success' | 'error' | 'info';
 
 type ToastItem = {
   id: string;
+  title: string;
   message: string;
   variant: ToastVariant;
+  leaving?: boolean;
 };
 
 type ConfirmOptions = {
@@ -35,11 +37,13 @@ type PromptOptions = {
   submitLabel?: string;
 };
 
+type ToastInput = string | { title?: string; message: string };
+
 type UiContextValue = {
   toast: {
-    success: (message: string) => void;
-    error: (message: string) => void;
-    info: (message: string) => void;
+    success: (input: ToastInput) => void;
+    error: (input: ToastInput) => void;
+    info: (input: ToastInput) => void;
   };
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   prompt: (options: PromptOptions) => Promise<string | null>;
@@ -47,12 +51,44 @@ type UiContextValue = {
 
 const UiContext = createContext<UiContextValue | null>(null);
 
-const TOAST_DURATION_MS = 3200;
+const TOAST_DURATION_MS = 3400;
+const TOAST_EXIT_MS = 280;
+
+function normalizeToast(input: ToastInput, variant: ToastVariant): { title: string; message: string } {
+  if (typeof input === 'string') {
+    const title = variant === 'success' ? 'Success' : variant === 'error' ? 'Error' : 'Info';
+    return { title, message: input };
+  }
+  const fallbackTitle = variant === 'success' ? 'Success' : variant === 'error' ? 'Error' : 'Info';
+  return { title: input.title ?? fallbackTitle, message: input.message };
+}
 
 function ToastIcon({ variant }: { variant: ToastVariant }) {
-  if (variant === 'success') return <span className="ui-toast__icon ui-toast__icon--success">✓</span>;
-  if (variant === 'error') return <span className="ui-toast__icon ui-toast__icon--error">!</span>;
-  return <span className="ui-toast__icon ui-toast__icon--info">i</span>;
+  if (variant === 'success') {
+    return (
+      <span className="ui-toast__icon" aria-hidden>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+          <path d="M6.4 11.3 3.2 8.1l1.1-1.1 2.1 2.1 5.3-5.3 1.1 1.1-6.4 6.4Z" />
+        </svg>
+      </span>
+    );
+  }
+  if (variant === 'error') {
+    return (
+      <span className="ui-toast__icon" aria-hidden>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+          <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm-.75 3.25h1.5v5h-1.5v-5Zm.75 7.5a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Z" />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span className="ui-toast__icon" aria-hidden>
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+        <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm-.75 3h1.5v1.5h-1.5V4.5ZM7.25 7.5h1.5V12h-1.5V7.5Z" />
+      </svg>
+    </span>
+  );
 }
 
 export function UiProvider({ children }: { children: ReactNode }) {
@@ -63,24 +99,51 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const confirmResolver = useRef<((value: boolean) => void) | null>(null);
   const promptResolver = useRef<((value: string | null) => void) | null>(null);
   const promptInputRef = useRef<HTMLInputElement>(null);
+  const timersRef = useRef<Map<string, number>>(new Map());
 
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  const clearToastTimers = useCallback((id: string) => {
+    const timer = timersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
   }, []);
 
+  const removeToast = useCallback(
+    (id: string) => {
+      clearToastTimers(id);
+      setToasts((prev) => prev.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast)));
+      const exitTimer = window.setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+        timersRef.current.delete(id);
+      }, TOAST_EXIT_MS);
+      timersRef.current.set(id, exitTimer);
+    },
+    [clearToastTimers],
+  );
+
   const pushToast = useCallback(
-    (message: string, variant: ToastVariant) => {
+    (input: ToastInput, variant: ToastVariant) => {
       const id = crypto.randomUUID();
-      setToasts((prev) => [...prev, { id, message, variant }]);
-      window.setTimeout(() => removeToast(id), TOAST_DURATION_MS);
+      const { title, message } = normalizeToast(input, variant);
+      setToasts((prev) => [...prev, { id, title, message, variant }]);
+      const timer = window.setTimeout(() => removeToast(id), TOAST_DURATION_MS);
+      timersRef.current.set(id, timer);
     },
     [removeToast],
   );
 
+  useEffect(() => {
+    return () => {
+      for (const timer of timersRef.current.values()) window.clearTimeout(timer);
+      timersRef.current.clear();
+    };
+  }, []);
+
   const toast = {
-    success: (message: string) => pushToast(message, 'success'),
-    error: (message: string) => pushToast(message, 'error'),
-    info: (message: string) => pushToast(message, 'info'),
+    success: (input: ToastInput) => pushToast(input, 'success'),
+    error: (input: ToastInput) => pushToast(input, 'error'),
+    info: (input: ToastInput) => pushToast(input, 'info'),
   };
 
   const closeConfirm = useCallback((result: boolean) => {
@@ -149,9 +212,18 @@ export function UiProvider({ children }: { children: ReactNode }) {
 
       <div className="ui-toast-host" aria-live="polite" aria-atomic="true">
         {toasts.map((item) => (
-          <div key={item.id} className={`ui-toast ui-toast--${item.variant}`} role="status">
+          <div
+            key={item.id}
+            className={`ui-toast ui-toast--${item.variant}${item.leaving ? ' ui-toast--leaving' : ''}`}
+            role="status"
+            style={{ ['--toast-duration' as string]: `${TOAST_DURATION_MS}ms` }}
+          >
+            <span className="ui-toast__accent" aria-hidden />
             <ToastIcon variant={item.variant} />
-            <span className="ui-toast__message">{item.message}</span>
+            <div className="ui-toast__body">
+              <p className="ui-toast__title">{item.title}</p>
+              <p className="ui-toast__message">{item.message}</p>
+            </div>
             <button
               type="button"
               className="ui-toast__close"
@@ -160,6 +232,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
             >
               ×
             </button>
+            <div className="ui-toast__progress" aria-hidden>
+              <div className="ui-toast__progress-bar" />
+            </div>
           </div>
         ))}
       </div>

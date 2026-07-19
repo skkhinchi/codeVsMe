@@ -7,11 +7,15 @@ import {
   startCompletion,
 } from '@codemirror/autocomplete';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
+import { css } from '@codemirror/lang-css';
+import { html, htmlCompletionSource } from '@codemirror/lang-html';
 import { javascript } from '@codemirror/lang-javascript';
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { playgroundCompletionSources } from '../editor/completions';
+import { createHtmlPathCompletions, htmlTagCompletions } from '../editor/htmlCompletions';
+import type { EditorLanguage } from '../editor/languageMode';
 
 export type CodeEditorHandle = {
   getCode: () => string;
@@ -23,24 +27,72 @@ type CodeEditorProps = {
   lineWrap: boolean;
   onRun: (code: string) => void;
   canRun?: boolean;
+  language?: EditorLanguage;
+  /** Sibling file names in the current folder (for HTML src/href suggestions). */
+  siblingFiles?: string[];
 };
 
 const wrapCompartment = new Compartment();
+const languageCompartment = new Compartment();
+const completionCompartment = new Compartment();
 /** Marks doc updates that came from React props, not user typing. */
 const ExternalSync = Annotation.define<boolean>();
 
 const editorKeymap = defaultKeymap.filter((binding) => binding.key !== 'Mod-Enter');
 
-/** Open the completion menu right after typing `.` (e.g. console.). */
-const dotCompletionTrigger = EditorView.inputHandler.of((view, _from, _to, text) => {
-  if (text === '.') {
+const completionTrigger = EditorView.inputHandler.of((view, _from, _to, text) => {
+  if (text === '.' || text === '<' || text === '"' || text === "'") {
     requestAnimationFrame(() => startCompletion(view));
   }
   return false;
 });
 
+function languageExtensions(language: EditorLanguage) {
+  if (language === 'html') return [html()];
+  if (language === 'css') return [css()];
+  if (language === 'javascript') return [javascript()];
+  return [];
+}
+
+function completionExtensions(language: EditorLanguage, getSiblingFiles: () => string[]) {
+  if (language === 'html') {
+    return [
+      autocompletion({
+        activateOnTyping: true,
+        activateOnTypingDelay: 0,
+        override: [
+          createHtmlPathCompletions({ getSiblingFiles }),
+          htmlTagCompletions,
+          htmlCompletionSource,
+        ],
+      }),
+    ];
+  }
+
+  if (language === 'css') {
+    return [
+      autocompletion({
+        activateOnTyping: true,
+        activateOnTypingDelay: 0,
+      }),
+    ];
+  }
+
+  if (language === 'javascript') {
+    return [
+      autocompletion({
+        activateOnTyping: true,
+        activateOnTypingDelay: 0,
+        override: playgroundCompletionSources,
+      }),
+    ];
+  }
+
+  return [autocompletion({ activateOnTyping: true })];
+}
+
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { value, onChange, lineWrap, onRun, canRun = true },
+  { value, onChange, lineWrap, onRun, canRun = true, language = 'javascript', siblingFiles = [] },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -48,10 +100,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const onChangeRef = useRef(onChange);
   const onRunRef = useRef(onRun);
   const canRunRef = useRef(canRun);
+  const siblingFilesRef = useRef(siblingFiles);
 
   onChangeRef.current = onChange;
   onRunRef.current = onRun;
   canRunRef.current = canRun;
+  siblingFilesRef.current = siblingFiles;
 
   useImperativeHandle(ref, () => ({
     getCode: () => viewRef.current?.state.doc.toString() ?? value,
@@ -60,21 +114,19 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const getSiblingFiles = () => siblingFilesRef.current;
+
     const view = new EditorView({
       parent: containerRef.current,
       state: EditorState.create({
         doc: value,
         extensions: [
           lineNumbers(),
-          javascript(),
+          languageCompartment.of(languageExtensions(language)),
           oneDark,
           closeBrackets(),
-          autocompletion({
-            activateOnTyping: true,
-            activateOnTypingDelay: 0,
-            override: playgroundCompletionSources,
-          }),
-          dotCompletionTrigger,
+          completionCompartment.of(completionExtensions(language, getSiblingFiles)),
+          completionTrigger,
           wrapCompartment.of(lineWrap ? EditorView.lineWrapping : []),
           Prec.highest(
             keymap.of([
@@ -105,6 +157,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       view.destroy();
       viewRef.current = null;
     };
+    // Mount once; language/completions reconfigured below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -129,5 +183,18 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     });
   }, [lineWrap]);
 
-  return <div ref={containerRef} className="code-editor" />;
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const getSiblingFiles = () => siblingFilesRef.current;
+    view.dispatch({
+      effects: [
+        languageCompartment.reconfigure(languageExtensions(language)),
+        completionCompartment.reconfigure(completionExtensions(language, getSiblingFiles)),
+      ],
+    });
+  }, [language]);
+
+  return <div ref={containerRef} className="code-editor" role="region" aria-label="Code editor" />;
 });

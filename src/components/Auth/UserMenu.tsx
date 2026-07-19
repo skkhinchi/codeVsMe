@@ -37,6 +37,7 @@ export function UserMenu({ user, onLogout }: UserMenuProps) {
         className="user-menu__trigger"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={`Account menu for ${user.name}`}
         onClick={() => setOpen((prev) => !prev)}
       >
         {user.picture ? (

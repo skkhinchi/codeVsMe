@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 type SplitPaneProps = {
   left: ReactNode;
@@ -11,61 +11,103 @@ type SplitPaneProps = {
 export function SplitPane({
   left,
   right,
-  initialLeftPercent = 50,
-  minPercent = 25,
-  maxPercent = 75,
+  initialLeftPercent = 55,
+  minPercent = 20,
+  maxPercent = 80,
 }: SplitPaneProps) {
   const [leftPercent, setLeftPercent] = useState(initialLeftPercent);
+  const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
+  const activePointerId = useRef<number | null>(null);
 
-  const onPointerMove = useCallback(
-    (event: PointerEvent) => {
-      if (!draggingRef.current || !containerRef.current) return;
-
-      const rect = containerRef.current.getBoundingClientRect();
-      const next = ((event.clientX - rect.left) / rect.width) * 100;
+  const updateFromClientX = useCallback(
+    (clientX: number) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const next = ((clientX - rect.left) / rect.width) * 100;
       setLeftPercent(Math.min(maxPercent, Math.max(minPercent, next)));
     },
     [maxPercent, minPercent],
   );
 
-  const stopDragging = useCallback(() => {
+  const endDrag = useCallback((target: HTMLElement, pointerId: number) => {
+    if (!draggingRef.current) return;
     draggingRef.current = false;
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
+    activePointerId.current = null;
+    setDragging(false);
+    document.body.classList.remove('is-resizing');
+    if (target.hasPointerCapture(pointerId)) {
+      target.releasePointerCapture(pointerId);
+    }
   }, []);
 
-  useEffect(() => {
-    const move = (event: PointerEvent) => onPointerMove(event);
-    const up = () => stopDragging();
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
 
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-  }, [onPointerMove, stopDragging]);
-
-  const startDragging = () => {
     draggingRef.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    activePointerId.current = event.pointerId;
+    setDragging(true);
+    document.body.classList.add('is-resizing');
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateFromClientX(event.clientX);
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current || activePointerId.current !== event.pointerId) return;
+    event.preventDefault();
+    updateFromClientX(event.clientX);
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== event.pointerId) return;
+    endDrag(event.currentTarget, event.pointerId);
+  };
+
+  const onPointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== event.pointerId) return;
+    endDrag(event.currentTarget, event.pointerId);
+  };
+
+  const onLostPointerCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== event.pointerId) return;
+    draggingRef.current = false;
+    activePointerId.current = null;
+    setDragging(false);
+    document.body.classList.remove('is-resizing');
   };
 
   return (
-    <div ref={containerRef} className="split-pane">
-      <section className="split-pane__panel" style={{ flexBasis: `${leftPercent}%` }}>
+    <div
+      ref={containerRef}
+      className={`split-pane ${dragging ? 'split-pane--dragging' : ''}`}
+    >
+      <section
+        className="split-pane__panel"
+        style={{
+          flex: `0 0 ${leftPercent}%`,
+          width: `${leftPercent}%`,
+          maxWidth: `${leftPercent}%`,
+        }}
+      >
         {left}
       </section>
       <div
         className="split-pane__divider"
         role="separator"
         aria-orientation="vertical"
+        aria-valuenow={Math.round(leftPercent)}
         aria-label="Resize panels"
-        onPointerDown={startDragging}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onLostPointerCapture}
+        onDoubleClick={() => setLeftPercent(initialLeftPercent)}
       />
       <section className="split-pane__panel split-pane__panel--grow">{right}</section>
     </div>

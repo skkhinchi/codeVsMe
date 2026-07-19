@@ -25,7 +25,8 @@ function serialize(value: unknown): string {
   if (value === null) return 'null';
   if (typeof value === 'function') return value.toString();
   try {
-    return JSON.stringify(value, null, 2) ?? String(value);
+    // Compact JSON so arrays/objects log on one line, like browser DevTools.
+    return JSON.stringify(value) ?? String(value);
   } catch {
     return String(value);
   }

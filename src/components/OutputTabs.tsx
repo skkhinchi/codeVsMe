@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
+import { EventLoopVisualizer } from './EventLoopVisualizer/EventLoopVisualizer';
 import { OutputPanel } from './OutputPanel';
 import { TerminalPanel } from './TerminalPanel';
 import { WebViewPanel } from './WebViewPanel';
+import type { EventLoopVisualizerApi } from '../hooks/useEventLoopVisualizer';
 import type { OutputLine, RunOutcome } from '../hooks/useCodeRunner';
 import type { TerminalLine } from '../hooks/useRepl';
 
-export type OutputTab = 'console' | 'terminal' | 'webview';
+export type OutputTab = 'console' | 'terminal' | 'webview' | 'visualization';
 
 type OutputTabsProps = {
   outputLines: OutputLine[];
@@ -22,6 +24,7 @@ type OutputTabsProps = {
   onTerminalExec: (input: string) => void;
   onTerminalPreviousInput: () => string;
   onTerminalNextInput: () => string;
+  visualizer: EventLoopVisualizerApi;
 };
 
 export function OutputTabs({
@@ -39,6 +42,7 @@ export function OutputTabs({
   onTerminalExec,
   onTerminalPreviousInput,
   onTerminalNextInput,
+  visualizer,
 }: OutputTabsProps) {
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -49,8 +53,27 @@ export function OutputTabs({
   const handleClear = () => {
     if (activeTab === 'console') onClearConsole();
     else if (activeTab === 'terminal') onClearTerminal();
-    else onClearWebView();
+    else if (activeTab === 'webview') onClearWebView();
+    else visualizer.clearTrace();
   };
+
+  const tabPanelId =
+    activeTab === 'console'
+      ? 'output-panel-console'
+      : activeTab === 'terminal'
+        ? 'output-panel-terminal'
+        : activeTab === 'webview'
+          ? 'output-panel-webview'
+          : 'output-panel-visualization';
+
+  const tabBtnId =
+    activeTab === 'console'
+      ? 'output-tab-console'
+      : activeTab === 'terminal'
+        ? 'output-tab-terminal'
+        : activeTab === 'webview'
+          ? 'output-tab-webview'
+          : 'output-tab-visualization';
 
   return (
     <div className="panel panel--output">
@@ -89,6 +112,17 @@ export function OutputTabs({
           >
             Web View
           </button>
+          <button
+            type="button"
+            role="tab"
+            id="output-tab-visualization"
+            aria-selected={activeTab === 'visualization'}
+            aria-controls="output-panel-visualization"
+            className={`output-tabs__tab ${activeTab === 'visualization' ? 'output-tabs__tab--active' : ''}`}
+            onClick={() => onActiveTabChange('visualization')}
+          >
+            Visualization
+          </button>
         </div>
         <div className="panel-toolbar__right">
           {activeTab === 'terminal' ? (
@@ -101,17 +135,18 @@ export function OutputTabs({
               Reload
             </button>
           ) : null}
-          <button type="button" className="btn btn--small" onClick={handleClear} aria-label={`Clear ${activeTab === 'webview' ? 'web view' : activeTab}`}>
+          <button
+            type="button"
+            className="btn btn--small"
+            onClick={handleClear}
+            aria-label={`Clear ${activeTab === 'webview' ? 'web view' : activeTab}`}
+          >
             Clear
           </button>
         </div>
       </div>
 
-      <div
-        role="tabpanel"
-        id={activeTab === 'console' ? 'output-panel-console' : activeTab === 'terminal' ? 'output-panel-terminal' : 'output-panel-webview'}
-        aria-labelledby={activeTab === 'console' ? 'output-tab-console' : activeTab === 'terminal' ? 'output-tab-terminal' : 'output-tab-webview'}
-      >
+      <div role="tabpanel" id={tabPanelId} aria-labelledby={tabBtnId}>
         {activeTab === 'console' ? (
           <OutputPanel lines={outputLines} runOutcome={runOutcome} />
         ) : activeTab === 'terminal' ? (
@@ -122,8 +157,26 @@ export function OutputTabs({
             onPreviousInput={onTerminalPreviousInput}
             onNextInput={onTerminalNextInput}
           />
-        ) : (
+        ) : activeTab === 'webview' ? (
           <WebViewPanel key={reloadKey} html={webViewHtml} />
+        ) : (
+          <EventLoopVisualizer
+            steps={visualizer.steps}
+            stepIndex={visualizer.stepIndex}
+            currentStep={visualizer.currentStep}
+            snapshot={visualizer.snapshot}
+            playing={visualizer.playing}
+            speed={visualizer.speed}
+            recording={visualizer.recording}
+            error={visualizer.trace?.error}
+            onPlay={() => visualizer.setPlaying(true)}
+            onPause={() => visualizer.setPlaying(false)}
+            onNext={visualizer.nextStep}
+            onPrev={visualizer.prevStep}
+            onReset={visualizer.resetPlayback}
+            onSpeedChange={visualizer.setSpeed}
+            onJump={(index) => visualizer.jumpTo(index)}
+          />
         )}
       </div>
     </div>

@@ -3,8 +3,11 @@ import {
   type CompletionContext,
   type CompletionResult,
   completeFromList,
+  type CompletionSource,
 } from '@codemirror/autocomplete';
 import { localCompletionSource, snippets } from '@codemirror/lang-javascript';
+import { jsAbbreviations } from './jsAbbreviations';
+import { jsStructureSnippets } from './jsStructureSnippets';
 import { playgroundScope } from './playgroundScope';
 
 const IDENT = /^[\w$]+$/;
@@ -135,8 +138,12 @@ export function playgroundCompletions(context: CompletionContext): CompletionRes
   return memberCompletions(context) ?? topLevelCompletions(context);
 }
 
-export const playgroundCompletionSources = [
-  playgroundCompletions,
-  localCompletionSource,
-  completeFromList(snippets),
-];
+export function createPlaygroundCompletionSources(): CompletionSource[] {
+  return [
+    jsAbbreviations,
+    jsStructureSnippets,
+    playgroundCompletions,
+    localCompletionSource,
+    completeFromList(snippets),
+  ];
+}
